@@ -89,6 +89,9 @@ Upstream's independent **WidgetKit** provider-widget configuration has no Window
 - Provider id: `orcarouter` (aliases `orca`, `orca-router`). Base: `https://api.orcarouter.ai/v1`.
 - Auth: Bearer API key — Settings → Providers, token accounts, or the `ORCAROUTER_API_KEY` environment variable.
 - Reports **workspace-level** usage/subscription summaries only: `GET /v1/dashboard/billing/usage` (`total_usage`) and `GET /v1/dashboard/billing/subscription` (`has_payment_method`, `soft_limit_usd`, `hard_limit_usd`, `system_hard_limit_usd`, `access_until`). Never label these as per-key spend.
+- Browser wallet balance is optional enrichment: `GET https://www.orcarouter.ai/api/user/self` supplies `active_workspace.wallet_quota`, converted with the current public `GET /api/status` `quota_per_unit` value instead of a hard-coded rate. Automatic and manual browser-cookie sources are supported.
+- `Auto` prefers the API workspace summary and adds browser wallet balance when a readable logged-in session exists. If the API path is unavailable but the browser wallet succeeds, Auto degrades to the wallet-only Web result. `OAuth` is API-only; `Web` is wallet-only.
+- Spend and prepaid wallet balance remain separate fields in the UI. A missing browser session never turns a successful API usage result into an error.
 - Missing/null summary fields surface as unknown — never as fabricated zeroes. Historical billing is not implemented (endpoints are summary-only).
 
 ## Upstream doc warning

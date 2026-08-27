@@ -18,13 +18,16 @@ use chrono::DateTime;
 use serde::Deserialize;
 
 use crate::core::{
-    FetchContext, Provider, ProviderError, ProviderFetchResult, ProviderId, ProviderMetadata,
-    RateWindow, SourceMode, UsageSnapshot,
+    CostSnapshot, FetchContext, Provider, ProviderError, ProviderFetchResult, ProviderId,
+    ProviderMetadata, RateWindow, SourceMode, UsageSnapshot,
 };
 
 const ORCA_API_BASE: &str = "https://api.orcarouter.ai/v1";
 const USAGE_URL: &str = "https://api.orcarouter.ai/v1/dashboard/billing/usage";
 const SUBSCRIPTION_URL: &str = "https://api.orcarouter.ai/v1/dashboard/billing/subscription";
+const WEB_SELF_URL: &str = "https://www.orcarouter.ai/api/user/self";
+const WEB_STATUS_URL: &str = "https://www.orcarouter.ai/api/status";
+const WEB_COOKIE_DOMAINS: &[&str] = &["www.orcarouter.ai", "orcarouter.ai"];
 const CREDENTIAL_TARGET: &str = "codexbar-orcarouter";
 const ENV_KEYS: &[&str] = &["ORCAROUTER_API_KEY"];
 const ORCA_DASHBOARD_URL: &str = "https://www.orcarouter.ai/console";
@@ -47,7 +50,7 @@ impl OrcaRouterProvider {
                 session_label: "Workspace usage",
                 weekly_label: "Spend limit",
                 supports_opus: false,
-                supports_credits: false,
+                supports_credits: true,
                 default_enabled: false,
                 is_primary: false,
                 dashboard_url: Some(ORCA_DASHBOARD_URL),
@@ -58,6 +61,22 @@ impl OrcaRouterProvider {
 
     fn resolve_api_key(api_key: Option<&str>) -> Result<String, ProviderError> {
         crate::providers::resolve_api_key(api_key, CREDENTIAL_TARGET, ENV_KEYS)
+    }
+
+    fn resolve_web_cookie(ctx: &FetchContext) -> Result<String, ProviderError> {
+        if let Some(cookie) = ctx.manual_cookie_header.as_deref() {
+            let cookie = cookie.trim();
+            if !cookie.is_empty() {
+                return Ok(cookie.to_string());
+            }
+        }
+        // Manual/token-scoped settings must not silently mix in an ambient
+        // browser account. `auto_prefer_web` is the existing shell signal for
+        // those explicitly scoped credentials.
+        if ctx.auto_prefer_web {
+            return Err(ProviderError::NoCookies);
+        }
+        crate::providers::browser_cookie_header(WEB_COOKIE_DOMAINS)
     }
 }
 
@@ -71,6 +90,40 @@ impl Default for OrcaRouterProvider {
 struct UsageResponse {
     #[serde(default)]
     total_usage: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebSelfResponse {
+    #[serde(default)]
+    success: Option<bool>,
+    #[serde(default)]
+    data: Option<WebSelfData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebSelfData {
+    #[serde(default)]
+    active_workspace: Option<WebWorkspace>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebWorkspace {
+    #[serde(default)]
+    wallet_quota: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StatusResponse {
+    #[serde(default)]
+    success: Option<bool>,
+    #[serde(default)]
+    data: Option<StatusData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StatusData {
+    #[serde(default)]
+    quota_per_unit: Option<f64>,
 }
 
 /// Subscription summary; every field is optional so partial responses parse.
@@ -106,6 +159,68 @@ impl UsageResponse {
         }
         Ok(parsed)
     }
+}
+
+impl WebSelfResponse {
+    fn parse(text: &str) -> Result<Self, ProviderError> {
+        let parsed: Self = parse_json(text, "web account")?;
+        if parsed.success == Some(false) {
+            return Err(ProviderError::AuthRequired);
+        }
+        parsed.wallet_quota()?;
+        Ok(parsed)
+    }
+
+    fn wallet_quota(&self) -> Result<f64, ProviderError> {
+        let quota = self
+            .data
+            .as_ref()
+            .and_then(|data| data.active_workspace.as_ref())
+            .and_then(|workspace| workspace.wallet_quota)
+            .ok_or_else(|| {
+                ProviderError::Parse(
+                    "OrcaRouter web account response did not include active_workspace.wallet_quota"
+                        .to_string(),
+                )
+            })?;
+        if !quota.is_finite() || quota < 0.0 {
+            return Err(ProviderError::Parse(
+                "OrcaRouter wallet_quota was not a finite non-negative number".to_string(),
+            ));
+        }
+        Ok(quota)
+    }
+}
+
+impl StatusResponse {
+    fn parse(text: &str) -> Result<Self, ProviderError> {
+        let parsed: Self = parse_json(text, "status")?;
+        if parsed.success == Some(false) || parsed.quota_per_unit().is_none() {
+            return Err(ProviderError::Parse(
+                "OrcaRouter status response did not include a usable quota_per_unit".to_string(),
+            ));
+        }
+        Ok(parsed)
+    }
+
+    fn quota_per_unit(&self) -> Option<f64> {
+        self.data
+            .as_ref()
+            .and_then(|data| data.quota_per_unit)
+            .filter(|rate| rate.is_finite() && *rate > 0.0)
+    }
+}
+
+fn wallet_balance_usd(wallet_quota: f64, status: &StatusResponse) -> Result<f64, ProviderError> {
+    let quota_per_unit = status.quota_per_unit().ok_or_else(|| {
+        ProviderError::Parse("OrcaRouter quota_per_unit is unavailable".to_string())
+    })?;
+    if !wallet_quota.is_finite() || wallet_quota < 0.0 {
+        return Err(ProviderError::Parse(
+            "OrcaRouter wallet_quota was not a finite non-negative number".to_string(),
+        ));
+    }
+    Ok(wallet_quota / quota_per_unit)
 }
 
 impl SubscriptionSummary {
@@ -156,6 +271,39 @@ async fn get_text(client: &reqwest::Client, url: &str, key: &str) -> Result<Stri
     resp.text()
         .await
         .map_err(|e| ProviderError::Other(format!("Failed to read OrcaRouter response: {e}")))
+}
+
+async fn get_web_text(
+    client: &reqwest::Client,
+    url: &str,
+    cookie_header: Option<&str>,
+) -> Result<String, ProviderError> {
+    let mut request = client.get(url).header("Accept", "application/json");
+    if let Some(cookie) = cookie_header {
+        request = request.header(reqwest::header::COOKIE, cookie);
+    }
+    let response = request.send().await?;
+    if !response.status().is_success() {
+        return Err(status_error(response.status()).expect("non-success statuses map to an error"));
+    }
+    response.text().await.map_err(|error| {
+        ProviderError::Other(format!("Failed to read OrcaRouter web response: {error}"))
+    })
+}
+
+async fn fetch_wallet_balance(
+    client: &reqwest::Client,
+    self_url: &str,
+    status_url: &str,
+    cookie_header: &str,
+) -> Result<f64, ProviderError> {
+    let (account_text, status_text) = tokio::join!(
+        get_web_text(client, self_url, Some(cookie_header)),
+        get_web_text(client, status_url, None),
+    );
+    let account = WebSelfResponse::parse(&account_text?)?;
+    let status = StatusResponse::parse(&status_text?)?;
+    wallet_balance_usd(account.wallet_quota()?, &status)
 }
 
 /// Fetch and parse both workspace summaries. The subscription call degrades
@@ -233,6 +381,88 @@ fn workspace_snapshot(total_usage_cents: f64, sub: Option<&SubscriptionSummary>)
     }
 }
 
+fn workspace_cost(
+    total_usage_cents: f64,
+    sub: Option<&SubscriptionSummary>,
+    wallet_balance: Option<f64>,
+) -> CostSnapshot {
+    let used_usd = (total_usage_cents / 100.0).max(0.0);
+    let mut cost = CostSnapshot::new(used_usd, "USD", "Workspace").with_currency_symbol("$");
+    if let Some(cap) = sub.and_then(SubscriptionSummary::effective_cap_usd)
+        && cap < NO_CAP_SENTINEL_USD
+    {
+        cost = cost.with_limit(cap);
+    }
+    if let Some(balance) = wallet_balance {
+        cost = cost.with_balance(balance);
+    }
+    cost
+}
+
+fn wallet_snapshot(balance_usd: f64) -> UsageSnapshot {
+    UsageSnapshot::new(RateWindow::informational(format!(
+        "{balance_usd:.2} USD wallet balance"
+    )))
+}
+
+fn wallet_cost(balance_usd: f64) -> CostSnapshot {
+    CostSnapshot::new(0.0, "USD", "Wallet")
+        .with_currency_symbol("$")
+        .with_balance(balance_usd)
+}
+
+fn merge_auto_results(
+    api_result: Result<(UsageResponse, Option<SubscriptionSummary>), ProviderError>,
+    wallet_result: Option<Result<f64, ProviderError>>,
+) -> Result<ProviderFetchResult, ProviderError> {
+    match api_result {
+        Ok((usage, subscription)) => {
+            let wallet_balance = match wallet_result {
+                Some(Ok(balance)) => Some(balance),
+                Some(Err(error)) => {
+                    tracing::debug!(
+                        %error,
+                        "OrcaRouter browser wallet enrichment unavailable; keeping API usage"
+                    );
+                    None
+                }
+                None => None,
+            };
+            let snapshot =
+                workspace_snapshot(usage.total_usage.unwrap_or_default(), subscription.as_ref());
+            let cost = workspace_cost(
+                usage.total_usage.unwrap_or_default(),
+                subscription.as_ref(),
+                wallet_balance,
+            );
+            let source = if wallet_balance.is_some() {
+                "api+web"
+            } else {
+                "api"
+            };
+            Ok(ProviderFetchResult::new(snapshot, source).with_cost(cost))
+        }
+        Err(api_error) => match wallet_result {
+            Some(Ok(balance)) => {
+                tracing::debug!(
+                    %api_error,
+                    "OrcaRouter API summary unavailable; falling back to browser wallet"
+                );
+                Ok(ProviderFetchResult::new(wallet_snapshot(balance), "web")
+                    .with_cost(wallet_cost(balance)))
+            }
+            Some(Err(web_error)) => {
+                tracing::debug!(
+                    %web_error,
+                    "OrcaRouter browser wallet fallback unavailable"
+                );
+                Err(api_error)
+            }
+            None => Err(api_error),
+        },
+    }
+}
+
 #[async_trait]
 impl Provider for OrcaRouterProvider {
     fn id(&self) -> ProviderId {
@@ -245,34 +475,76 @@ impl Provider for OrcaRouterProvider {
 
     async fn fetch_usage(&self, ctx: &FetchContext) -> Result<ProviderFetchResult, ProviderError> {
         match ctx.source_mode {
-            SourceMode::Auto | SourceMode::OAuth => {
-                let api_key = Self::resolve_api_key(ctx.api_key.as_deref())?;
+            SourceMode::Auto => {
                 let client = crate::core::credentialed_http_client_builder()
                     .timeout(std::time::Duration::from_secs(ctx.web_timeout.max(1)))
                     .build()
                     .map_err(|e| ProviderError::Other(e.to_string()))?;
 
-                tracing::debug!("Fetching OrcaRouter workspace summary");
+                tracing::debug!(
+                    "Fetching OrcaRouter workspace summary with optional wallet enrichment"
+                );
 
+                let api_result = match Self::resolve_api_key(ctx.api_key.as_deref()) {
+                    Ok(api_key) => {
+                        fetch_summaries(&client, USAGE_URL, SUBSCRIPTION_URL, &api_key).await
+                    }
+                    Err(error) => Err(error),
+                };
+                let wallet_result = if ctx.include_credits {
+                    Some(match Self::resolve_web_cookie(ctx) {
+                        Ok(cookie) => {
+                            fetch_wallet_balance(&client, WEB_SELF_URL, WEB_STATUS_URL, &cookie)
+                                .await
+                        }
+                        Err(error) => Err(error),
+                    })
+                } else {
+                    None
+                };
+
+                merge_auto_results(api_result, wallet_result)
+            }
+            SourceMode::OAuth => {
+                let api_key = Self::resolve_api_key(ctx.api_key.as_deref())?;
+                let client = crate::core::credentialed_http_client_builder()
+                    .timeout(std::time::Duration::from_secs(ctx.web_timeout.max(1)))
+                    .build()
+                    .map_err(|e| ProviderError::Other(e.to_string()))?;
                 let (usage, subscription) =
                     fetch_summaries(&client, USAGE_URL, SUBSCRIPTION_URL, &api_key).await?;
-
-                Ok(ProviderFetchResult::new(
-                    workspace_snapshot(
-                        usage.total_usage.unwrap_or_default(),
-                        subscription.as_ref(),
-                    ),
-                    "api",
-                ))
+                let snapshot = workspace_snapshot(
+                    usage.total_usage.unwrap_or_default(),
+                    subscription.as_ref(),
+                );
+                let cost = workspace_cost(
+                    usage.total_usage.unwrap_or_default(),
+                    subscription.as_ref(),
+                    None,
+                );
+                Ok(ProviderFetchResult::new(snapshot, "api").with_cost(cost))
             }
-            SourceMode::Web | SourceMode::Cli => {
-                Err(ProviderError::UnsupportedSource(ctx.source_mode))
+            SourceMode::Web => {
+                let cookie = Self::resolve_web_cookie(ctx)?;
+                let client = crate::core::credentialed_http_client_builder()
+                    .timeout(std::time::Duration::from_secs(ctx.web_timeout.max(1)))
+                    .build()
+                    .map_err(|e| ProviderError::Other(e.to_string()))?;
+                let balance =
+                    fetch_wallet_balance(&client, WEB_SELF_URL, WEB_STATUS_URL, &cookie).await?;
+                Ok(ProviderFetchResult::new(wallet_snapshot(balance), "web")
+                    .with_cost(wallet_cost(balance)))
             }
+            SourceMode::Cli => Err(ProviderError::UnsupportedSource(ctx.source_mode)),
         }
     }
 
     fn available_sources(&self) -> Vec<SourceMode> {
-        vec![SourceMode::Auto, SourceMode::OAuth]
+        vec![SourceMode::Auto, SourceMode::OAuth, SourceMode::Web]
+    }
+
+    fn supports_web(&self) -> bool {
+        true
     }
 }
 
@@ -289,6 +561,135 @@ mod tests {
         "system_hard_limit_usd": 100.0,
         "access_until": 1735689600
     }"#;
+
+    const COMPLETE_WEB_SELF: &str = r#"{
+        "success": true,
+        "data": {
+            "active_workspace": {
+                "wallet_quota": 2505000
+            }
+        }
+    }"#;
+
+    const COMPLETE_STATUS: &str = r#"{
+        "success": true,
+        "data": {
+            "quota_per_unit": 500000,
+            "display_in_currency": true,
+            "quota_display_type": "USD"
+        }
+    }"#;
+
+    #[test]
+    fn parses_browser_wallet_and_runtime_quota_rate() {
+        let account = WebSelfResponse::parse(COMPLETE_WEB_SELF).unwrap();
+        let status = StatusResponse::parse(COMPLETE_STATUS).unwrap();
+
+        assert_eq!(account.wallet_quota().unwrap(), 2_505_000.0);
+        assert_eq!(status.quota_per_unit(), Some(500_000.0));
+        assert_eq!(
+            wallet_balance_usd(account.wallet_quota().unwrap(), &status).unwrap(),
+            5.01
+        );
+    }
+
+    #[test]
+    fn combined_cost_keeps_workspace_spend_and_wallet_balance_separate() {
+        let sub = SubscriptionSummary::parse(COMPLETE_SUB).unwrap();
+        let cost = workspace_cost(1499.4496, Some(&sub), Some(5.01));
+
+        assert!((cost.used - 14.994496).abs() < 1e-9);
+        assert_eq!(cost.limit, Some(100.0));
+        assert_eq!(cost.balance, Some(5.01));
+        assert_eq!(cost.currency_code, "USD");
+        assert_eq!(cost.currency_symbol.as_deref(), Some("$"));
+    }
+
+    #[tokio::test]
+    async fn browser_wallet_fetch_uses_cookie_session_and_public_status_rate() {
+        let mut server = mockito::Server::new_async().await;
+        let self_mock = server
+            .mock("GET", "/api/user/self")
+            .match_header("cookie", "session=browser-session")
+            .with_status(200)
+            .with_body(COMPLETE_WEB_SELF)
+            .create_async()
+            .await;
+        let status_mock = server
+            .mock("GET", "/api/status")
+            .with_status(200)
+            .with_body(COMPLETE_STATUS)
+            .create_async()
+            .await;
+
+        let balance = fetch_wallet_balance(
+            &reqwest::Client::new(),
+            &format!("{}/api/user/self", server.url()),
+            &format!("{}/api/status", server.url()),
+            "session=browser-session",
+        )
+        .await
+        .unwrap();
+
+        self_mock.assert_async().await;
+        status_mock.assert_async().await;
+        assert_eq!(balance, 5.01);
+    }
+
+    #[test]
+    fn provider_exposes_browser_source_for_wallet_balance() {
+        let provider = OrcaRouterProvider::new();
+        assert!(provider.metadata().supports_credits);
+        assert!(provider.supports_web());
+        assert_eq!(
+            provider.available_sources(),
+            vec![SourceMode::Auto, SourceMode::OAuth, SourceMode::Web]
+        );
+    }
+
+    #[test]
+    fn manual_or_token_scoped_cookie_mode_never_falls_back_to_ambient_browser_session() {
+        let ctx = FetchContext {
+            auto_prefer_web: true,
+            ..FetchContext::default()
+        };
+        assert!(matches!(
+            OrcaRouterProvider::resolve_web_cookie(&ctx),
+            Err(ProviderError::NoCookies)
+        ));
+    }
+
+    #[test]
+    fn auto_merge_falls_back_to_wallet_when_api_is_unavailable() {
+        let result = merge_auto_results(Err(ProviderError::AuthRequired), Some(Ok(5.01))).unwrap();
+        assert_eq!(result.source_label, "web");
+        assert_eq!(
+            result.cost.as_ref().and_then(|cost| cost.balance),
+            Some(5.01)
+        );
+        assert_eq!(
+            result.usage.primary.reset_description.as_deref(),
+            Some("5.01 USD wallet balance")
+        );
+    }
+
+    #[test]
+    fn auto_merge_keeps_api_usage_when_wallet_enrichment_fails() {
+        let usage = UsageResponse::parse(COMPLETE_USAGE).unwrap();
+        let subscription = SubscriptionSummary::parse(COMPLETE_SUB).unwrap();
+        let result = merge_auto_results(
+            Ok((usage, Some(subscription))),
+            Some(Err(ProviderError::NoCookies)),
+        )
+        .unwrap();
+        assert_eq!(result.source_label, "api");
+        assert!(
+            result
+                .cost
+                .as_ref()
+                .is_some_and(|cost| cost.balance.is_none())
+        );
+    }
 
     #[test]
     fn parses_complete_workspace_summary() {

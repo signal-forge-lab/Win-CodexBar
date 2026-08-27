@@ -553,7 +553,9 @@ export default function MenuCardDetails({
                 ? provider.cost.period || t("CreditsLabel")
               : `${t("DetailCostTitle")} — ${provider.cost.period}`}
           </div>
-          {provider.cost.balance != null && provider.cost.limit == null ? (
+          {provider.cost.balance != null &&
+          provider.cost.limit == null &&
+          provider.cost.used <= 0 ? (
             <div className="menu-card__cost-line">
               {provider.cost.formattedBalance ||
                 formatCurrency(

@@ -63,6 +63,8 @@ pub(crate) fn build_fetch_context(
         id == ProviderId::Kimi && api_key.as_deref().is_some_and(|key| !key.trim().is_empty());
     let has_opencodego_api_key = id == ProviderId::OpenCodeGo
         && api_key.as_deref().is_some_and(|key| !key.trim().is_empty());
+    let has_orcarouter_api_key = id == ProviderId::OrcaRouter
+        && api_key.as_deref().is_some_and(|key| !key.trim().is_empty());
 
     let (mut source_mode, mut cookie_header) = if id.cookie_domain().is_none() {
         let source_mode = if active_token_env.is_some() {
@@ -101,17 +103,18 @@ pub(crate) fn build_fetch_context(
             "off" => (SourceMode::Cli, None),
             "manual" => {
                 let cookie_header = active_token_cookie.or(stored_cookie);
-                let source_mode = if (has_kimi_code_api_key || has_opencodego_api_key)
-                    && usage_source == SourceMode::Auto
-                {
-                    SourceMode::Auto
-                } else if cookie_header.is_some() {
-                    SourceMode::Web
-                } else if provider_uses_oauth_without_cookies(id, usage_source) {
-                    SourceMode::OAuth
-                } else {
-                    SourceMode::Cli
-                };
+                let source_mode =
+                    if (has_kimi_code_api_key || has_opencodego_api_key || has_orcarouter_api_key)
+                        && usage_source == SourceMode::Auto
+                    {
+                        SourceMode::Auto
+                    } else if cookie_header.is_some() {
+                        SourceMode::Web
+                    } else if provider_uses_oauth_without_cookies(id, usage_source) {
+                        SourceMode::OAuth
+                    } else {
+                        SourceMode::Cli
+                    };
                 (source_mode, cookie_header)
             }
             // `browser` is accepted as a legacy alias from older settings.
