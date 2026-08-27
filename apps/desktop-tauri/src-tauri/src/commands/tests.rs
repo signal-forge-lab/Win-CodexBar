@@ -241,6 +241,11 @@ fn provider_cookie_source_lookup_roundtrips_known_providers() {
         provider_cookie_source_lookup(&s, "codex").as_deref(),
         Some("cli-config")
     );
+    super::provider_cookie_source_set(&mut s, "orcarouter", "manual".to_string()).unwrap();
+    assert_eq!(
+        provider_cookie_source_lookup(&s, "orcarouter").as_deref(),
+        Some("manual")
+    );
     assert!(provider_cookie_source_lookup(&s, "unknown-provider").is_none());
 }
 
@@ -639,6 +644,32 @@ fn fetch_context_opencodego_api_key_preserves_auto_for_api_overlay() {
     assert_eq!(ctx.source_mode, SourceMode::Auto);
     assert!(ctx.manual_cookie_header.is_none());
     assert_eq!(ctx.api_key.as_deref(), Some("go-test"));
+}
+
+#[test]
+fn fetch_context_orcarouter_manual_cookie_and_api_key_preserve_combined_auto() {
+    let mut settings = Settings::default();
+    settings.set_cookie_source(ProviderId::OrcaRouter, "manual");
+    settings.set_usage_source(ProviderId::OrcaRouter, "auto");
+    let mut cookies = ManualCookies::default();
+    cookies.set("orcarouter", "session=orca-browser-session");
+    let mut api_keys = ApiKeys::default();
+    api_keys.set("orcarouter", "sk-orca-test", None);
+
+    let ctx = super::build_fetch_context(
+        ProviderId::OrcaRouter,
+        &settings,
+        &cookies,
+        &api_keys,
+        &HashMap::new(),
+    );
+
+    assert_eq!(ctx.source_mode, SourceMode::Auto);
+    assert_eq!(
+        ctx.manual_cookie_header.as_deref(),
+        Some("session=orca-browser-session")
+    );
+    assert_eq!(ctx.api_key.as_deref(), Some("sk-orca-test"));
 }
 
 #[test]
@@ -1639,6 +1670,15 @@ fn cookie_options_for_cookie_supporting_provider() {
     assert!(opts.iter().any(|o| o.label == "Automatic"));
     assert!(opts.iter().any(|o| o.label == "Manual"));
     assert!(opts.iter().any(|o| o.label == "Disabled"));
+}
+
+#[test]
+fn orcarouter_cookie_options_expose_auto_and_manual_browser_session_sources() {
+    let opts = super::cookie_source_options_for("orcarouter", Language::English);
+    let values: Vec<_> = opts.iter().map(|o| o.value.as_str()).collect();
+    assert_eq!(values, vec!["auto", "manual"]);
+    assert!(opts.iter().any(|o| o.label == "Automatic"));
+    assert!(opts.iter().any(|o| o.label == "Manual"));
 }
 
 #[test]

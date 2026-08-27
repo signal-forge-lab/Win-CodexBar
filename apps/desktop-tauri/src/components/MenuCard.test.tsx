@@ -688,6 +688,35 @@ describe("MenuCard", () => {
     expect(screen.getByText(/Balance:\s*\$25\.50/)).toBeInTheDocument();
   });
 
+  it("shows uncapped spend plus a separate prepaid balance", async () => {
+    tauriMocks.getLocaleStrings.mockResolvedValue(
+      buildBundle({
+        DetailCostTitle: "Cost",
+        DetailCostUsed: "Used",
+        DetailCostBalance: "Balance",
+      }),
+    );
+    const snapshot = provider(null, 20);
+    snapshot.cost = {
+      used: 14.994496,
+      limit: null,
+      remaining: null,
+      currencyCode: "USD",
+      period: "Workspace",
+      resetsAt: null,
+      formattedUsed: "$14.99",
+      formattedLimit: null,
+      balance: 5.01,
+      formattedBalance: "$5.01",
+    };
+
+    renderCard(snapshot);
+
+    expect(await screen.findByText(/Cost — Workspace/)).toBeInTheDocument();
+    expect(screen.getByText(/Used:\s*\$14\.99/)).toBeInTheDocument();
+    expect(screen.getByText(/Balance:\s*\$5\.01/)).toBeInTheDocument();
+  });
+
   it("renders balance-only cost as credits-style value", async () => {
     tauriMocks.getLocaleStrings.mockResolvedValue(
       buildBundle({

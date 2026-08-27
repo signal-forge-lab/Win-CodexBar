@@ -185,6 +185,7 @@ fn cookie_source_provider(provider_id: &str) -> Option<codexbar::core::ProviderI
         "sakana" => ProviderId::Sakana,
         "notion" => ProviderId::Notion,
         "grok" => ProviderId::Grok,
+        "orcarouter" => ProviderId::OrcaRouter,
         _ => return None,
     })
 }
@@ -689,6 +690,22 @@ pub fn cookie_source_options_for(provider_id: &str, lang: Language) -> Vec<Cooki
                 None,
             ),
             cookie_option(lang, "off", "", "", Some("Notion cookies are disabled.")),
+        ],
+        "orcarouter" => vec![
+            cookie_option(
+                lang,
+                "auto",
+                "Automatically imports the logged-in OrcaRouter browser session.",
+                "",
+                None,
+            ),
+            cookie_option(
+                lang,
+                "manual",
+                "",
+                "Paste a Cookie header from www.orcarouter.ai.",
+                None,
+            ),
         ],
         _ => Vec::new(),
     }

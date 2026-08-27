@@ -377,7 +377,7 @@ impl ProviderId {
             ProviderId::DeepInfra => None,
             ProviderId::Fireworks => None,
             ProviderId::Meta => None,
-            ProviderId::OrcaRouter => None,
+            ProviderId::OrcaRouter => Some("www.orcarouter.ai"),
             ProviderId::AiAnd => None,
             ProviderId::Windsurf => None,
             ProviderId::Doubao => None,
@@ -1318,7 +1318,10 @@ mod tests {
             ProviderId::from_cli_name("orca-router"),
             Some(ProviderId::OrcaRouter)
         );
-        assert_eq!(ProviderId::OrcaRouter.cookie_domain(), None);
+        assert_eq!(
+            ProviderId::OrcaRouter.cookie_domain(),
+            Some("www.orcarouter.ai")
+        );
     }
 
     #[test]
