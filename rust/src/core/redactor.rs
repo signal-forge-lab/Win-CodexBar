@@ -65,7 +65,7 @@ fn api_key_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
         Regex::new(
-            r"(?i)\b(?:sk|ghp|gho|github_pat|zai|nanogpt|openrouter|fk)-[A-Za-z0-9_\-]{8,}\b",
+            r"(?i)\b(?:sk|ghp|gho|github_pat|zai|nanogpt|openrouter|orca|fk)-[A-Za-z0-9_\-]{8,}\b",
         )
         .expect("Invalid API key regex")
     })
@@ -259,6 +259,14 @@ mod tests {
         let redacted = SecretRedactor::redact(input);
         assert!(!redacted.contains("fk-test-key"));
         assert_eq!(redacted, "Factory key [REDACTED]");
+    }
+
+    #[test]
+    fn redacts_orcarouter_api_keys() {
+        let input = "OrcaRouter key orca-test-key-abcdef123456";
+        let redacted = SecretRedactor::redact(input);
+        assert!(!redacted.contains("orca-test-key"));
+        assert_eq!(redacted, "OrcaRouter key [REDACTED]");
     }
 
     #[test]

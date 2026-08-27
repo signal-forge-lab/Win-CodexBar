@@ -84,6 +84,7 @@ pub enum ProviderId {
     Fireworks,
     #[serde(alias = "metaspark")]
     Meta,
+    OrcaRouter,
 }
 
 impl ProviderId {
@@ -161,6 +162,7 @@ impl ProviderId {
             ProviderId::Xai,
             ProviderId::Fireworks,
             ProviderId::Meta,
+            ProviderId::OrcaRouter,
         ]
     }
 
@@ -204,6 +206,7 @@ impl ProviderId {
             ProviderId::DeepInfra => "deepinfra",
             ProviderId::Fireworks => "fireworks",
             ProviderId::Meta => "meta",
+            ProviderId::OrcaRouter => "orcarouter",
             ProviderId::AiAnd => "aiand",
             ProviderId::Windsurf => "windsurf",
             ProviderId::Manus => "manus",
@@ -282,6 +285,7 @@ impl ProviderId {
             ProviderId::DeepInfra => "DeepInfra",
             ProviderId::Fireworks => "Fireworks",
             ProviderId::Meta => "Meta",
+            ProviderId::OrcaRouter => "OrcaRouter",
             ProviderId::AiAnd => "ai&",
             ProviderId::Windsurf => "Windsurf",
             ProviderId::Manus => "Manus",
@@ -373,6 +377,7 @@ impl ProviderId {
             ProviderId::DeepInfra => None,
             ProviderId::Fireworks => None,
             ProviderId::Meta => None,
+            ProviderId::OrcaRouter => None,
             ProviderId::AiAnd => None,
             ProviderId::Windsurf => None,
             ProviderId::Doubao => None,
@@ -448,6 +453,7 @@ impl ProviderId {
             "fireworks" | "fireworks-ai" | "fw" => Some(ProviderId::Fireworks),
             "meta" | "metaspark" | "meta-spark" | "muse-spark" | "musespark" | "muse spark"
             | "meta muse spark" => Some(ProviderId::Meta),
+            "orcarouter" | "orca" | "orca-router" => Some(ProviderId::OrcaRouter),
             "aiand" | "ai&" | "ai-and" | "ai and" => Some(ProviderId::AiAnd),
             "windsurf" | "codeium" => Some(ProviderId::Windsurf),
             "manus" => Some(ProviderId::Manus),
@@ -848,6 +854,8 @@ pub fn cli_name_map() -> HashMap<&'static str, ProviderId> {
     map.insert("musespark", ProviderId::Meta);
     map.insert("muse spark", ProviderId::Meta);
     map.insert("meta muse spark", ProviderId::Meta);
+    map.insert("orca", ProviderId::OrcaRouter);
+    map.insert("orca-router", ProviderId::OrcaRouter);
     map.insert("ai&", ProviderId::AiAnd);
     map.insert("ai-and", ProviderId::AiAnd);
     map.insert("codeium", ProviderId::Windsurf);
@@ -976,6 +984,7 @@ pub fn brand_color(id: ProviderId) -> &'static str {
         ProviderId::Xai => "#8E8E93",
         ProviderId::Fireworks => "#F25B1C",
         ProviderId::Meta => "#0467DF",
+        ProviderId::OrcaRouter => "#0891B2",
     }
 }
 
@@ -990,7 +999,7 @@ mod tests {
     #[test]
     fn test_provider_id_all() {
         let all = ProviderId::all();
-        assert_eq!(all.len(), 71);
+        assert_eq!(all.len(), 72);
         assert!(all.contains(&ProviderId::Claude));
         assert!(all.contains(&ProviderId::Codex));
         assert!(all.contains(&ProviderId::Fireworks));
@@ -1042,6 +1051,7 @@ mod tests {
         assert!(all.contains(&ProviderId::Notion));
         assert!(all.contains(&ProviderId::Xai));
         assert!(all.contains(&ProviderId::Meta));
+        assert!(all.contains(&ProviderId::OrcaRouter));
     }
 
     #[test]
@@ -1290,6 +1300,25 @@ mod tests {
             Some(ProviderId::Meta)
         );
         assert_eq!(brand_color(ProviderId::Meta), "#0467DF");
+    }
+
+    #[test]
+    fn orcarouter_metadata_and_aliases() {
+        assert_eq!(ProviderId::OrcaRouter.cli_name(), "orcarouter");
+        assert_eq!(ProviderId::OrcaRouter.display_name(), "OrcaRouter");
+        assert_eq!(
+            ProviderId::from_cli_name("orcarouter"),
+            Some(ProviderId::OrcaRouter)
+        );
+        assert_eq!(
+            ProviderId::from_cli_name("orca"),
+            Some(ProviderId::OrcaRouter)
+        );
+        assert_eq!(
+            ProviderId::from_cli_name("orca-router"),
+            Some(ProviderId::OrcaRouter)
+        );
+        assert_eq!(ProviderId::OrcaRouter.cookie_domain(), None);
     }
 
     #[test]

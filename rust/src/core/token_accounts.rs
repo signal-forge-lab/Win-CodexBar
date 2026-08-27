@@ -302,6 +302,16 @@ impl TokenAccountSupport {
                 requires_manual_cookie_source: false,
                 cookie_name: None,
             }),
+            ProviderId::OrcaRouter => Some(TokenAccountSupport {
+                title: "API keys",
+                subtitle: "Store multiple OrcaRouter API keys.",
+                placeholder: "ORCAROUTER_API_KEY from orcarouter.ai",
+                injection: TokenInjection::Environment {
+                    key: "ORCAROUTER_API_KEY".to_string(),
+                },
+                requires_manual_cookie_source: false,
+                cookie_name: None,
+            }),
             ProviderId::Copilot => Some(TokenAccountSupport {
                 title: "GitHub accounts",
                 subtitle: "Store GitHub OAuth tokens for Copilot plan usage.",
