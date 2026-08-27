@@ -695,7 +695,7 @@ pub fn cookie_source_options_for(provider_id: &str, lang: Language) -> Vec<Cooki
             cookie_option(
                 lang,
                 "auto",
-                "Automatically imports the logged-in OrcaRouter browser session.",
+                "Uses a logged-in local Chromium session (CDP when available, then browser cookies).",
                 "",
                 None,
             ),

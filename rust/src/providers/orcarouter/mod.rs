@@ -13,6 +13,8 @@
 //! Historical or per-request billing is intentionally not implemented; the
 //! endpoints above are summary-only.
 
+mod cdp;
+
 use async_trait::async_trait;
 use chrono::DateTime;
 use serde::Deserialize;
@@ -306,6 +308,44 @@ async fn fetch_wallet_balance(
     wallet_balance_usd(account.wallet_quota()?, &status)
 }
 
+async fn fetch_status(
+    client: &reqwest::Client,
+    status_url: &str,
+) -> Result<StatusResponse, ProviderError> {
+    let text = get_web_text(client, status_url, None).await?;
+    StatusResponse::parse(&text)
+}
+
+async fn fetch_browser_wallet_balance(
+    client: &reqwest::Client,
+    ctx: &FetchContext,
+) -> Result<f64, ProviderError> {
+    // Explicit manual/token-scoped sessions must never be replaced by a different
+    // ambient browser account. Only automatic browser mode may use CDP discovery.
+    if !ctx.auto_prefer_web
+        && let Ok(wallet_quota) = cdp::fetch_wallet_quota(ctx.web_timeout).await
+    {
+        let status = fetch_status(client, WEB_STATUS_URL).await?;
+        return wallet_balance_usd(wallet_quota, &status);
+    }
+
+    let cookie = match OrcaRouterProvider::resolve_web_cookie(ctx) {
+        Ok(cookie) => cookie,
+        Err(error) if !ctx.auto_prefer_web => {
+            tracing::debug!(
+                %error,
+                "OrcaRouter automatic browser session was not authenticated"
+            );
+            return Err(ProviderError::Other(
+                "No authenticated OrcaRouter browser session found. Sign in to www.orcarouter.ai in Edge/Chrome, then refresh CodexBar."
+                    .to_string(),
+            ));
+        }
+        Err(error) => return Err(error),
+    };
+    fetch_wallet_balance(client, WEB_SELF_URL, WEB_STATUS_URL, &cookie).await
+}
+
 /// Fetch and parse both workspace summaries. The subscription call degrades
 /// gracefully (usage still renders without limits). Split out so tests can
 /// drive it against a local mock server.
@@ -492,13 +532,7 @@ impl Provider for OrcaRouterProvider {
                     Err(error) => Err(error),
                 };
                 let wallet_result = if ctx.include_credits {
-                    Some(match Self::resolve_web_cookie(ctx) {
-                        Ok(cookie) => {
-                            fetch_wallet_balance(&client, WEB_SELF_URL, WEB_STATUS_URL, &cookie)
-                                .await
-                        }
-                        Err(error) => Err(error),
-                    })
+                    Some(fetch_browser_wallet_balance(&client, ctx).await)
                 } else {
                     None
                 };
@@ -525,13 +559,11 @@ impl Provider for OrcaRouterProvider {
                 Ok(ProviderFetchResult::new(snapshot, "api").with_cost(cost))
             }
             SourceMode::Web => {
-                let cookie = Self::resolve_web_cookie(ctx)?;
                 let client = crate::core::credentialed_http_client_builder()
                     .timeout(std::time::Duration::from_secs(ctx.web_timeout.max(1)))
                     .build()
                     .map_err(|e| ProviderError::Other(e.to_string()))?;
-                let balance =
-                    fetch_wallet_balance(&client, WEB_SELF_URL, WEB_STATUS_URL, &cookie).await?;
+                let balance = fetch_browser_wallet_balance(&client, ctx).await?;
                 Ok(ProviderFetchResult::new(wallet_snapshot(balance), "web")
                     .with_cost(wallet_cost(balance)))
             }
