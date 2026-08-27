@@ -82,6 +82,7 @@ pub enum ProviderId {
     Notion,
     Xai,
     Fireworks,
+    OrcaRouter,
 }
 
 impl ProviderId {
@@ -158,6 +159,7 @@ impl ProviderId {
             ProviderId::Notion,
             ProviderId::Xai,
             ProviderId::Fireworks,
+            ProviderId::OrcaRouter,
         ]
     }
 
@@ -234,6 +236,7 @@ impl ProviderId {
             ProviderId::QwenCloud => "qwen-cloud",
             ProviderId::Notion => "notion",
             ProviderId::Xai => "xai",
+            ProviderId::OrcaRouter => "orcarouter",
         }
     }
 
@@ -312,6 +315,7 @@ impl ProviderId {
             ProviderId::QwenCloud => "Qwen Cloud",
             ProviderId::Notion => "Notion AI",
             ProviderId::Xai => "xAI",
+            ProviderId::OrcaRouter => "OrcaRouter",
         }
     }
 
@@ -393,6 +397,7 @@ impl ProviderId {
             ProviderId::QwenCloud => Some("qwencloud.com"),
             ProviderId::Notion => Some("app.notion.com"),
             ProviderId::Xai => None,
+            ProviderId::OrcaRouter => None,
         }
     }
 
@@ -484,6 +489,7 @@ impl ProviderId {
             }
             "zoommate" | "zoom-mate" | "zoom mate" => Some(ProviderId::ZoomMate),
             "notion" | "notion-ai" | "notionai" | "notion ai" => Some(ProviderId::Notion),
+            "orcarouter" | "orca" | "orca-router" => Some(ProviderId::OrcaRouter),
             _ => None,
         }
     }
@@ -864,6 +870,7 @@ pub fn brand_color(id: ProviderId) -> &'static str {
         ProviderId::Notion => "#337EA9",
         ProviderId::Xai => "#8E8E93",
         ProviderId::Fireworks => "#F25B1C",
+        ProviderId::OrcaRouter => "#0891B2",
     }
 }
 
@@ -874,7 +881,7 @@ mod tests {
     #[test]
     fn test_provider_id_all() {
         let all = ProviderId::all();
-        assert_eq!(all.len(), 70);
+        assert_eq!(all.len(), 71);
         assert!(all.contains(&ProviderId::Claude));
         assert!(all.contains(&ProviderId::Codex));
         assert!(all.contains(&ProviderId::Fireworks));
@@ -925,6 +932,26 @@ mod tests {
         assert!(all.contains(&ProviderId::QwenCloud));
         assert!(all.contains(&ProviderId::Notion));
         assert!(all.contains(&ProviderId::Xai));
+        assert!(all.contains(&ProviderId::OrcaRouter));
+    }
+
+    #[test]
+    fn orcarouter_metadata_and_aliases() {
+        assert_eq!(ProviderId::OrcaRouter.cli_name(), "orcarouter");
+        assert_eq!(ProviderId::OrcaRouter.display_name(), "OrcaRouter");
+        assert_eq!(
+            ProviderId::from_cli_name("orcarouter"),
+            Some(ProviderId::OrcaRouter)
+        );
+        assert_eq!(
+            ProviderId::from_cli_name("orca"),
+            Some(ProviderId::OrcaRouter)
+        );
+        assert_eq!(
+            ProviderId::from_cli_name("orca-router"),
+            Some(ProviderId::OrcaRouter)
+        );
+        assert_eq!(ProviderId::OrcaRouter.cookie_domain(), None);
     }
 
     #[test]

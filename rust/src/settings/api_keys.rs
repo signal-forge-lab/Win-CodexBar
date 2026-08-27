@@ -568,5 +568,16 @@ pub fn get_api_key_providers() -> Vec<ProviderConfigInfo> {
             config_file_path: Some("%USERPROFILE%\\.factory\\.env"),
             dashboard_url: Some("https://app.factory.ai/settings/api-keys"),
         },
+        ProviderConfigInfo {
+            id: ProviderId::OrcaRouter,
+            name: "OrcaRouter",
+            requires_api_key: true,
+            api_key_env_var: Some("ORCAROUTER_API_KEY"),
+            api_key_help: Some(
+                "Get your API key from OrcaRouter. Usage and limits are workspace-level summaries.",
+            ),
+            config_file_path: None,
+            dashboard_url: Some("https://www.orcarouter.ai/console"),
+        },
     ]
 }

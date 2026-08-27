@@ -94,6 +94,8 @@ codexbar config providers
 codexbar config enable -p cursor
 codexbar config disable -p cursor
 printf '%s' $env:OPENROUTER_API_KEY | codexbar config set-api-key -p openrouter --stdin
+printf '%s' $env:ORCAROUTER_API_KEY | codexbar config set-api-key -p orcarouter --stdin
+codexbar usage -p orcarouter --json --pretty   # workspace usage/limit summary
 codexbar config validate
 ```
 

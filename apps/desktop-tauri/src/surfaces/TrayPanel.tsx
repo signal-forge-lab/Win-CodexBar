@@ -30,7 +30,7 @@ const HAS_DASHBOARD = new Set([
   "doubao", "elevenlabs", "factory", "gemini", "grok", "groq",
   "infini", "jetbrains", "kilo", "kimi", "kimik2", "kiro", "manus",
   "mimo", "minimax", "mistral", "nanogpt", "notion", "ollama", "openaiapi",
-  "opencode", "opencodego", "openrouter", "perplexity", "qoder", "codebuddy", "sakana", "stepfun",
+  "opencode", "opencodego", "openrouter", "orcarouter", "perplexity", "qoder", "codebuddy", "sakana", "stepfun",
   "t3chat", "venice", "vertexai", "warp", "windsurf",
   "xai", "zai", "fireworks",
 ]);

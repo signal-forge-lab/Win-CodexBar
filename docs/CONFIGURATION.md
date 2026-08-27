@@ -49,6 +49,7 @@ codexbar config path
 
 # API key via stdin (example)
 printf '%s' $env:OPENROUTER_API_KEY | codexbar config set-api-key -p openrouter --stdin
+printf '%s' $env:ORCAROUTER_API_KEY | codexbar config set-api-key -p orcarouter --stdin
 ```
 
 Notes:

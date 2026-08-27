@@ -82,6 +82,14 @@ OpenCode-held OpenAI/Codex OAuth can be reused for **remote Codex account quota*
 z.ai Coding Plans accept both `TOKENS_LIMIT` and `CREDIT_LIMIT` rows. The shortest known Coding Plan window becomes primary and the longest becomes secondary; `TIME_LIMIT` is the separate MCP lane. When absolute usage/remaining counts are available they determine the used percentage, otherwise the provider percentage is used, always clamped to 0–100%. This behavior is shared by the tray, provider detail, CLI, and other Windows surfaces.
 
 Upstream's independent **WidgetKit** provider-widget configuration has no Windows analogue in this repository. Win-CodexBar has no WidgetKit extension; provider cards and tray entries are already independent Windows/Tauri surfaces.
+## Token-based providers (summary endpoints)
+
+### OrcaRouter
+
+- Provider id: `orcarouter` (aliases `orca`, `orca-router`). Base: `https://api.orcarouter.ai/v1`.
+- Auth: Bearer API key — Settings → Providers, token accounts, or the `ORCAROUTER_API_KEY` environment variable.
+- Reports **workspace-level** usage/subscription summaries only: `GET /v1/dashboard/billing/usage` (`total_usage`) and `GET /v1/dashboard/billing/subscription` (`has_payment_method`, `soft_limit_usd`, `hard_limit_usd`, `system_hard_limit_usd`, `access_until`). Never label these as per-key spend.
+- Missing/null summary fields surface as unknown — never as fabricated zeroes. Historical billing is not implemented (endpoints are summary-only).
 
 ## Upstream doc warning
 

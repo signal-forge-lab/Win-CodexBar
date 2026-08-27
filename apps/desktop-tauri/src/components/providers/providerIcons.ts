@@ -219,6 +219,7 @@ export const PROVIDER_ICON_REGISTRY: Record<string, ProviderIcon> = {
   qwencloud:   { id: "qwencloud",   brandColor: "#615CED", fallbackLetter: "Q" },
   notion:      { id: "notion",      brandColor: "#337EA9", fallbackLetter: "N", svgPath: RAW.notion },
   xai:         { id: "xai",         brandColor: "#8e8e93", fallbackLetter: "X", svgPath: RAW.xai },
+  orcarouter:  { id: "orcarouter",  brandColor: "#0891b2", fallbackLetter: "O" },
 };
 
 const ALIASES: Record<string, string> = {
