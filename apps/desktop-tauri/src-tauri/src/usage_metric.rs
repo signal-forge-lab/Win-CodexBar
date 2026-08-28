@@ -102,6 +102,19 @@ fn automatic_window(
         return Some(semantic_monthly.clone());
     }
 
+    // OrcaRouter's API workspace summary is intentionally informational: the
+    // provider does not expose a meaningful quota limit there. Once wallet
+    // enrichment is available, however, used + balance is the funded total,
+    // which gives the float bar a meaningful depletion metric.
+    if provider == Some(ProviderId::OrcaRouter)
+        && snapshot.source_label == "api+web"
+        && snapshot.primary.is_informational
+    {
+        if let Some(window) = cost_window(snapshot) {
+            return Some(window);
+        }
+    }
+
     if provider == Some(ProviderId::Claude) {
         let weekly = non_informational(snapshot.secondary.as_ref());
         if let (Some(model), Some(weekly)) = (snapshot.model_specific.as_ref(), weekly) {
@@ -194,10 +207,26 @@ fn average_window(snapshot: &ProviderUsageSnapshot) -> Option<RateWindowSnapshot
 
 fn cost_window(snapshot: &ProviderUsageSnapshot) -> Option<RateWindowSnapshot> {
     let cost = snapshot.cost.as_ref()?;
-    let limit = cost.limit?;
-    if limit <= 0.0 {
+    if !cost.used.is_finite() || cost.used < 0.0 {
         return None;
     }
+
+    let limit = match cost.limit {
+        Some(limit) if limit.is_finite() && limit > 0.0 => limit,
+        _ if ProviderId::from_cli_name(&snapshot.provider_id) == Some(ProviderId::OrcaRouter) => {
+            let balance = cost.balance?;
+            if !balance.is_finite() || balance < 0.0 {
+                return None;
+            }
+            let funded_total = cost.used + balance;
+            if !funded_total.is_finite() || funded_total <= 0.0 {
+                return None;
+            }
+            funded_total
+        }
+        _ => return None,
+    };
+
     Some(derived_window(
         (cost.used / limit) * 100.0,
         cost.resets_at.clone(),
@@ -492,6 +521,91 @@ mod tests {
         let selected = selected_usage_window(&snapshot, &settings);
         assert_eq!(selected.used_percent, 40.0);
         assert_eq!(selected.remaining_percent, 60.0);
+    }
+
+    #[test]
+    fn orcarouter_wallet_derives_funded_total_for_automatic_metric() {
+        let mut snapshot = snapshot();
+        snapshot.provider_id = "orcarouter".to_string();
+        snapshot.display_name = "OrcaRouter".to_string();
+        snapshot.source_label = "api+web".to_string();
+        snapshot.primary = window(0.0);
+        snapshot.primary.is_informational = true;
+        snapshot.secondary = None;
+        snapshot.cost = Some(crate::commands::CostSnapshotBridge {
+            used: 15.0,
+            limit: None,
+            remaining: None,
+            currency_code: "USD".to_string(),
+            currency_symbol: Some("$".to_string()),
+            period: "Workspace".to_string(),
+            resets_at: None,
+            formatted_used: "$15.00".to_string(),
+            formatted_limit: None,
+            balance: Some(5.0),
+            formatted_balance: Some("$5.00".to_string()),
+            daily: Vec::new(),
+        });
+
+        let selected = selected_usage_window(&snapshot, &Settings::default());
+        assert!((selected.used_percent - 75.0).abs() < f64::EPSILON);
+        assert!((selected.remaining_percent - 25.0).abs() < f64::EPSILON);
+        assert!(!selected.is_informational);
+    }
+
+    #[test]
+    fn orcarouter_wallet_only_snapshot_does_not_invent_spend_ratio() {
+        let mut snapshot = snapshot();
+        snapshot.provider_id = "orcarouter".to_string();
+        snapshot.display_name = "OrcaRouter".to_string();
+        snapshot.source_label = "web".to_string();
+        snapshot.primary = window(0.0);
+        snapshot.primary.is_informational = true;
+        snapshot.secondary = None;
+        snapshot.cost = Some(crate::commands::CostSnapshotBridge {
+            used: 0.0,
+            limit: None,
+            remaining: None,
+            currency_code: "USD".to_string(),
+            currency_symbol: Some("$".to_string()),
+            period: "Wallet".to_string(),
+            resets_at: None,
+            formatted_used: "$0.00".to_string(),
+            formatted_limit: None,
+            balance: Some(5.0),
+            formatted_balance: Some("$5.00".to_string()),
+            daily: Vec::new(),
+        });
+
+        let selected = selected_usage_window(&snapshot, &Settings::default());
+        assert!((selected.used_percent - 0.0).abs() < f64::EPSILON);
+        assert!((selected.remaining_percent - 100.0).abs() < f64::EPSILON);
+        assert!(selected.is_informational);
+    }
+
+    #[test]
+    fn balance_without_limit_does_not_change_other_providers() {
+        let mut snapshot = snapshot();
+        snapshot.primary = window(40.0);
+        snapshot.secondary = None;
+        snapshot.cost = Some(crate::commands::CostSnapshotBridge {
+            used: 15.0,
+            limit: None,
+            remaining: None,
+            currency_code: "USD".to_string(),
+            currency_symbol: Some("$".to_string()),
+            period: "Workspace".to_string(),
+            resets_at: None,
+            formatted_used: "$15.00".to_string(),
+            formatted_limit: None,
+            balance: Some(5.0),
+            formatted_balance: Some("$5.00".to_string()),
+            daily: Vec::new(),
+        });
+
+        let selected = selected_usage_window(&snapshot, &Settings::default());
+        assert!((selected.used_percent - 40.0).abs() < f64::EPSILON);
+        assert!((selected.remaining_percent - 60.0).abs() < f64::EPSILON);
     }
 
     #[test]
