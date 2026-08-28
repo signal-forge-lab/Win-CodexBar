@@ -55,6 +55,17 @@ pub enum ConfigCommand {
         #[arg(long = "no-enable")]
         no_enable: bool,
     },
+    /// Store a browser cookie header for a provider
+    SetCookie {
+        /// Provider CLI name or alias
+        provider: String,
+        /// Cookie header to store
+        #[arg(long = "cookie")]
+        cookie: Option<String>,
+        /// Read the cookie header from stdin
+        #[arg(long)]
+        stdin: bool,
+    },
     /// Show configuration file paths
     Path,
 }
@@ -76,6 +87,11 @@ pub async fn run(args: ConfigArgs) -> anyhow::Result<()> {
             stdin,
             no_enable,
         } => set_api_key(&provider, api_key.as_deref(), stdin, !no_enable).await,
+        ConfigCommand::SetCookie {
+            provider,
+            cookie,
+            stdin,
+        } => set_cookie(&provider, cookie.as_deref(), stdin).await,
         ConfigCommand::Path => show_paths().await,
     }
 }
@@ -172,6 +188,7 @@ where
         .map_err(ConfigFileError::Parse)
 }
 
+#[derive(Debug)]
 enum ConfigFileError {
     Read(std::io::Error),
     Parse(serde_json::Error),
@@ -388,6 +405,23 @@ async fn set_api_key(
     Ok(())
 }
 
+/// Store a browser cookie header using the same DPAPI-protected secret file
+/// used by the application UI. Stdin is preferred so secret material does not
+/// appear in the process command line.
+async fn set_cookie(
+    provider: &str,
+    cookie: Option<&str>,
+    read_from_stdin: bool,
+) -> anyhow::Result<()> {
+    let id = parse_provider(provider)?;
+    let cookie = resolve_secret_input(cookie, read_from_stdin, "cookie")?;
+    let mut cookies = ManualCookies::load();
+    cookies.set(id.cli_name(), &cookie);
+    cookies.save()?;
+    println!("Config: stored browser cookie for {}", id.display_name());
+    Ok(())
+}
+
 fn parse_provider(raw: &str) -> anyhow::Result<ProviderId> {
     ProviderId::from_cli_name(raw).ok_or_else(|| {
         anyhow::anyhow!(
@@ -408,8 +442,16 @@ fn ensure_provider_accepts_api_key(id: ProviderId) -> anyhow::Result<()> {
 }
 
 fn resolve_api_key_input(api_key: Option<&str>, read_from_stdin: bool) -> anyhow::Result<String> {
-    if api_key.is_some() && read_from_stdin {
-        anyhow::bail!("Use either --api-key or --stdin, not both.");
+    resolve_secret_input(api_key, read_from_stdin, "API key")
+}
+
+fn resolve_secret_input(
+    value: Option<&str>,
+    read_from_stdin: bool,
+    label: &str,
+) -> anyhow::Result<String> {
+    if value.is_some() && read_from_stdin {
+        anyhow::bail!("Use either the inline {label} option or --stdin, not both.");
     }
 
     let raw = if read_from_stdin {
@@ -418,13 +460,13 @@ fn resolve_api_key_input(api_key: Option<&str>, read_from_stdin: bool) -> anyhow
         std::io::stdin().read_to_string(&mut buffer)?;
         Some(buffer)
     } else {
-        api_key.map(ToString::to_string)
+        value.map(ToString::to_string)
     };
 
     let mut value = raw
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("Missing API key. Pass --api-key <key> or use --stdin."))?;
+        .ok_or_else(|| anyhow::anyhow!("Missing {label}. Pass it inline or use --stdin."))?;
 
     if (value.starts_with('"') && value.ends_with('"'))
         || (value.starts_with('\'') && value.ends_with('\''))
@@ -435,7 +477,7 @@ fn resolve_api_key_input(api_key: Option<&str>, read_from_stdin: bool) -> anyhow
 
     let value = value.trim().to_string();
     if value.is_empty() {
-        anyhow::bail!("Missing API key. Pass --api-key <key> or use --stdin.");
+        anyhow::bail!("Missing {label}. Pass it inline or use --stdin.");
     }
     Ok(value)
 }
@@ -520,6 +562,23 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("unsupported secure file protection"));
         assert!(!message.contains(payload));
+    }
+
+    #[test]
+    fn config_validation_reads_secure_manual_cookie_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("manual_cookies.json");
+        let value = json!({
+            "cookies": {
+                "orcarouter": {
+                    "cookie_header": "session=secret",
+                    "saved_at": "2026-08-29 00:00"
+                }
+            }
+        });
+        crate::secure_file::write_string(&path, &serde_json::to_string(&value).unwrap()).unwrap();
+
+        read_json_config::<ManualCookies>(&path).unwrap();
     }
 
     #[test]

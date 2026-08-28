@@ -34,21 +34,60 @@ function Receive-Cdp([System.Net.WebSockets.ClientWebSocket]$ws) {
     }
 }
 
-$ports = @(Get-CimInstance Win32_Process | Where-Object {
+$endpoints = @(Get-CimInstance Win32_Process | Where-Object {
     $_.Name -in @('msedge.exe', 'chrome.exe', 'brave.exe') -and
     $_.CommandLine -match '--remote-debugging-port=([0-9]+)'
 } | ForEach-Object {
-    if ($_.CommandLine -match '--remote-debugging-port=([0-9]+)') { [int]$matches[1] }
-} | Sort-Object -Unique)
+    if ($_.CommandLine -match '--remote-debugging-port=([0-9]+)') {
+        [pscustomobject]@{ port = [int]$matches[1]; wsUrl = $null }
+    }
+})
 
-foreach ($port in $ports) {
+# Chrome 144+ / current Edge can expose an approved existing profile through
+# DevToolsActivePort without a --remote-debugging-port process argument. Only
+# trust a loopback listener whose owning process is a Chromium browser.
+$activePortFiles = @(
+    (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data\DevToolsActivePort'),
+    (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data\DevToolsActivePort')
+)
+foreach ($activePortFile in $activePortFiles) {
+    try {
+        if (-not (Test-Path -LiteralPath $activePortFile)) { continue }
+        $lines = @(Get-Content -LiteralPath $activePortFile -ErrorAction Stop)
+        if ($lines.Count -lt 2) { continue }
+        $port = 0
+        if (-not [int]::TryParse([string]$lines[0], [ref]$port) -or $port -le 0) { continue }
+        $path = [string]$lines[1]
+        if ($path -notmatch '^/devtools/browser/[A-Za-z0-9._-]+$') { continue }
+        $listener = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction Stop |
+            Where-Object { $_.LocalAddress -in @('127.0.0.1', '::1') } |
+            Select-Object -First 1
+        if (-not $listener) { continue }
+        $owner = Get-Process -Id $listener.OwningProcess -ErrorAction Stop
+        if ($owner.ProcessName -notin @('msedge', 'chrome', 'brave')) { continue }
+        $endpoints += [pscustomobject]@{
+            port = $port
+            wsUrl = ("ws://127.0.0.1:{0}{1}" -f $port, $path)
+        }
+    } catch {
+        # Ignore stale or inaccessible browser endpoint metadata.
+    }
+}
+
+$endpoints = @($endpoints | Group-Object port | ForEach-Object { $_.Group | Select-Object -First 1 })
+
+foreach ($endpoint in $endpoints) {
     $ws = $null
     try {
-        $version = Invoke-RestMethod -Uri ("http://127.0.0.1:{0}/json/version" -f $port) -TimeoutSec 2
-        if (-not $version.webSocketDebuggerUrl) { continue }
+        $wsUrl = [string]$endpoint.wsUrl
+        if (-not $wsUrl) {
+            $version = Invoke-RestMethod -Uri ("http://127.0.0.1:{0}/json/version" -f $endpoint.port) -TimeoutSec 2
+            $wsUrl = [string]$version.webSocketDebuggerUrl
+        }
+        if (-not $wsUrl) { continue }
 
         $ws = [System.Net.WebSockets.ClientWebSocket]::new()
-        $ws.ConnectAsync([Uri]$version.webSocketDebuggerUrl, $cts.Token).GetAwaiter().GetResult()
+        $ws.ConnectAsync([Uri]$wsUrl, $cts.Token).GetAwaiter().GetResult()
 
         Send-Cdp $ws 1 'Target.getTargets' @{}
         do { $message = Receive-Cdp $ws } until ($message.id -eq 1)
@@ -226,5 +265,8 @@ mod tests {
         assert!(!EDGE_CDP_WALLET_SCRIPT.contains("New-Api-User"));
         assert!(EDGE_CDP_WALLET_SCRIPT.contains("Network.getResponseBody"));
         assert!(EDGE_CDP_WALLET_SCRIPT.contains("wallet_quota"));
+        assert!(EDGE_CDP_WALLET_SCRIPT.contains("DevToolsActivePort"));
+        assert!(EDGE_CDP_WALLET_SCRIPT.contains("Get-NetTCPConnection"));
+        assert!(EDGE_CDP_WALLET_SCRIPT.contains("OwningProcess"));
     }
 }

@@ -7,7 +7,7 @@ use crate::core::{
     CostSnapshot, FetchContext, ProviderFetchResult, ProviderId, RateWindow, SourceMode,
     TokenAccountStore, TokenAccountSupport, UsagePace, UsageSnapshot, instantiate_provider,
 };
-use crate::settings::ApiKeys;
+use crate::settings::{ApiKeys, ManualCookies};
 use crate::status::{ProviderStatus as StatusInfo, StatusLevel, fetch_provider_status};
 
 pub const PROVIDER_ARG_HELP: &str = "Provider to query (for example: codex, claude, gemini, antigravity/agy, nanogpt, deepseek, codebuff, windsurf, all, both)";
@@ -312,6 +312,11 @@ async fn fetch_provider_result(
     let mut ctx = command.ctx.clone();
     if ctx.api_key.is_none() {
         ctx.api_key = resolve_cli_api_key(provider_id, command.account.as_deref())?;
+    }
+    if ctx.manual_cookie_header.is_none() {
+        ctx.manual_cookie_header = ManualCookies::load()
+            .get(provider_id.cli_name())
+            .map(ToString::to_string);
     }
     let result = provider.fetch_usage(&ctx).await?;
     let status = if let Some(fut) = status_future {
