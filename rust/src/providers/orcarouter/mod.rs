@@ -576,8 +576,19 @@ fn merge_auto_results(
                 }
                 None => None,
             };
-            let snapshot =
+            let mut snapshot =
                 workspace_snapshot(usage.total_usage.unwrap_or_default(), subscription.as_ref());
+            if let Some(balance) = wallet_balance {
+                let usage_description = snapshot
+                    .primary
+                    .reset_description
+                    .take()
+                    .unwrap_or_else(|| "Workspace usage".to_string());
+                snapshot.primary.reset_description = Some(format!(
+                    "{} · {:.2} USD wallet balance",
+                    usage_description, balance
+                ));
+            }
             let cost = workspace_cost(
                 usage.total_usage.unwrap_or_default(),
                 subscription.as_ref(),
@@ -866,6 +877,22 @@ mod tests {
                 .cost
                 .as_ref()
                 .is_some_and(|cost| cost.balance.is_none())
+        );
+    }
+
+    #[test]
+    fn auto_merge_shows_workspace_usage_and_wallet_balance_together() {
+        let usage = UsageResponse::parse(r#"{"total_usage":1500.0}"#).unwrap();
+        let result = merge_auto_results(Ok((usage, None)), Some(Ok(5.0))).unwrap();
+
+        assert_eq!(result.source_label, "api+web");
+        assert_eq!(
+            result.usage.primary.reset_description.as_deref(),
+            Some("15.00 USD workspace usage · 5.00 USD wallet balance")
+        );
+        assert_eq!(
+            result.cost.as_ref().and_then(|cost| cost.balance),
+            Some(5.0)
         );
     }
 
