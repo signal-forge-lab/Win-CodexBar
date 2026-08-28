@@ -316,6 +316,30 @@ async fn get_web_text_for_identity(
     })
 }
 
+async fn get_web_text_for_session(
+    client: &reqwest::Client,
+    url: &str,
+    cookie_header: &str,
+    identity: &local_storage::BrowserIdentity,
+) -> Result<String, ProviderError> {
+    let mut request = client
+        .get(url)
+        .header("Accept", "application/json")
+        .header("Cache-Control", "no-store")
+        .header(reqwest::header::COOKIE, cookie_header)
+        .header("New-API-User", &identity.user_id);
+    if let Some(workspace_id) = identity.workspace_id.as_deref() {
+        request = request.header("X-Workspace-Id", workspace_id);
+    }
+    let response = request.send().await?;
+    if !response.status().is_success() {
+        return Err(status_error(response.status()).expect("non-success statuses map to an error"));
+    }
+    response.text().await.map_err(|error| {
+        ProviderError::Other(format!("Failed to read OrcaRouter web response: {error}"))
+    })
+}
+
 async fn fetch_wallet_balance(
     client: &reqwest::Client,
     self_url: &str,
@@ -339,6 +363,22 @@ async fn fetch_wallet_balance_for_identity(
 ) -> Result<f64, ProviderError> {
     let (account_text, status_text) = tokio::join!(
         get_web_text_for_identity(client, self_url, identity),
+        get_web_text(client, status_url, None),
+    );
+    let account = WebSelfResponse::parse(&account_text?)?;
+    let status = StatusResponse::parse(&status_text?)?;
+    wallet_balance_usd(account.wallet_quota()?, &status)
+}
+
+async fn fetch_wallet_balance_for_session(
+    client: &reqwest::Client,
+    self_url: &str,
+    status_url: &str,
+    cookie_header: &str,
+    identity: &local_storage::BrowserIdentity,
+) -> Result<f64, ProviderError> {
+    let (account_text, status_text) = tokio::join!(
+        get_web_text_for_session(client, self_url, cookie_header, identity),
         get_web_text(client, status_url, None),
     );
     let account = WebSelfResponse::parse(&account_text?)?;
@@ -394,6 +434,23 @@ async fn fetch_browser_wallet_balance(
         }
         Err(error) => return Err(error),
     };
+    for identity in local_storage::browser_identities() {
+        match fetch_wallet_balance_for_session(
+            client,
+            WEB_SELF_URL,
+            WEB_STATUS_URL,
+            &cookie,
+            &identity,
+        )
+        .await
+        {
+            Ok(balance) => return Ok(balance),
+            Err(error) => tracing::debug!(
+                %error,
+                "OrcaRouter saved cookie did not match this browser identity; trying another"
+            ),
+        }
+    }
     fetch_wallet_balance(client, WEB_SELF_URL, WEB_STATUS_URL, &cookie).await
 }
 
@@ -710,6 +767,44 @@ mod tests {
             &format!("{}/api/user/self", server.url()),
             &format!("{}/api/status", server.url()),
             "session=browser-session",
+        )
+        .await
+        .unwrap();
+
+        self_mock.assert_async().await;
+        status_mock.assert_async().await;
+        assert_eq!(balance, 5.01);
+    }
+
+    #[tokio::test]
+    async fn browser_wallet_fetch_uses_cookie_and_browser_identity_headers() {
+        let mut server = mockito::Server::new_async().await;
+        let self_mock = server
+            .mock("GET", "/api/user/self")
+            .match_header("cookie", "session=browser-session")
+            .match_header("new-api-user", "19915")
+            .match_header("x-workspace-id", "19645")
+            .with_status(200)
+            .with_body(COMPLETE_WEB_SELF)
+            .create_async()
+            .await;
+        let status_mock = server
+            .mock("GET", "/api/status")
+            .with_status(200)
+            .with_body(COMPLETE_STATUS)
+            .create_async()
+            .await;
+        let identity = local_storage::BrowserIdentity {
+            user_id: "19915".to_string(),
+            workspace_id: Some("19645".to_string()),
+        };
+
+        let balance = fetch_wallet_balance_for_session(
+            &reqwest::Client::new(),
+            &format!("{}/api/user/self", server.url()),
+            &format!("{}/api/status", server.url()),
+            "session=browser-session",
+            &identity,
         )
         .await
         .unwrap();
