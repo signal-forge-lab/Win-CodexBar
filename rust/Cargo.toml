@@ -52,6 +52,9 @@ image = { version = "0.25", default-features = false }
 # SQLite for reading browser cookies
 rusqlite = { version = "0.32", features = ["bundled"] }
 
+# Chromium DOM Local Storage reader (LevelDB-backed)
+chromium-storage-localstorage-core = "0.2.0"
+
 # Encryption for cookie decryption
 aes-gcm = "0.10"
 base64 = "0.22"

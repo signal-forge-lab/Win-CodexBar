@@ -14,6 +14,7 @@
 //! endpoints above are summary-only.
 
 mod cdp;
+mod local_storage;
 
 use async_trait::async_trait;
 use chrono::DateTime;
@@ -293,6 +294,28 @@ async fn get_web_text(
     })
 }
 
+async fn get_web_text_for_identity(
+    client: &reqwest::Client,
+    url: &str,
+    identity: &local_storage::BrowserIdentity,
+) -> Result<String, ProviderError> {
+    let mut request = client
+        .get(url)
+        .header("Accept", "application/json")
+        .header("Cache-Control", "no-store")
+        .header("New-API-User", &identity.user_id);
+    if let Some(workspace_id) = identity.workspace_id.as_deref() {
+        request = request.header("X-Workspace-Id", workspace_id);
+    }
+    let response = request.send().await?;
+    if !response.status().is_success() {
+        return Err(status_error(response.status()).expect("non-success statuses map to an error"));
+    }
+    response.text().await.map_err(|error| {
+        ProviderError::Other(format!("Failed to read OrcaRouter web response: {error}"))
+    })
+}
+
 async fn fetch_wallet_balance(
     client: &reqwest::Client,
     self_url: &str,
@@ -301,6 +324,21 @@ async fn fetch_wallet_balance(
 ) -> Result<f64, ProviderError> {
     let (account_text, status_text) = tokio::join!(
         get_web_text(client, self_url, Some(cookie_header)),
+        get_web_text(client, status_url, None),
+    );
+    let account = WebSelfResponse::parse(&account_text?)?;
+    let status = StatusResponse::parse(&status_text?)?;
+    wallet_balance_usd(account.wallet_quota()?, &status)
+}
+
+async fn fetch_wallet_balance_for_identity(
+    client: &reqwest::Client,
+    self_url: &str,
+    status_url: &str,
+    identity: &local_storage::BrowserIdentity,
+) -> Result<f64, ProviderError> {
+    let (account_text, status_text) = tokio::join!(
+        get_web_text_for_identity(client, self_url, identity),
         get_web_text(client, status_url, None),
     );
     let account = WebSelfResponse::parse(&account_text?)?;
@@ -321,12 +359,25 @@ async fn fetch_browser_wallet_balance(
     ctx: &FetchContext,
 ) -> Result<f64, ProviderError> {
     // Explicit manual/token-scoped sessions must never be replaced by a different
-    // ambient browser account. Only automatic browser mode may use CDP discovery.
-    if !ctx.auto_prefer_web
-        && let Ok(wallet_quota) = cdp::fetch_wallet_quota(ctx.web_timeout).await
-    {
-        let status = fetch_status(client, WEB_STATUS_URL).await?;
-        return wallet_balance_usd(wallet_quota, &status);
+    // ambient browser account. Only automatic browser mode may use LocalStorage
+    // identity or CDP discovery.
+    if !ctx.auto_prefer_web {
+        for identity in local_storage::browser_identities() {
+            match fetch_wallet_balance_for_identity(client, WEB_SELF_URL, WEB_STATUS_URL, &identity)
+                .await
+            {
+                Ok(balance) => return Ok(balance),
+                Err(error) => tracing::debug!(
+                    %error,
+                    "OrcaRouter LocalStorage identity did not authenticate; trying another browser session"
+                ),
+            }
+        }
+
+        if let Ok(wallet_quota) = cdp::fetch_wallet_quota(ctx.web_timeout).await {
+            let status = fetch_status(client, WEB_STATUS_URL).await?;
+            return wallet_balance_usd(wallet_quota, &status);
+        }
     }
 
     let cookie = match OrcaRouterProvider::resolve_web_cookie(ctx) {
