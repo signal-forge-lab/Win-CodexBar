@@ -27,7 +27,7 @@ const HAS_DASHBOARD = new Set([
   "abacus", "alibaba", "alibabatokenplan", "amp", "augment",
   "azureopenai", "bedrock", "claude", "codex", "codebuff",
   "aiand", "commandcode", "copilot", "crof", "crossmodel", "cursor", "deepgram", "deepinfra", "deepseek", "zenmux", "clinepass", "longcat", "neuralwatt", "zoommate",
-  "doubao", "elevenlabs", "factory", "gemini", "grok", "groq",
+  "doubao", "elevenlabs", "factory", "gemini", "geminiapps", "grok", "groq",
   "infini", "jetbrains", "kilo", "kimi", "kimik2", "kiro", "manus",
   "mimo", "minimax", "mistral", "nanogpt", "notion", "ollama", "openaiapi",
   "opencode", "opencodego", "openrouter", "orcarouter", "perplexity", "qoder", "codebuddy", "sakana", "stepfun",

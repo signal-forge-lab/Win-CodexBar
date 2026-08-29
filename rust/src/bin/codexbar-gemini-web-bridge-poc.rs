@@ -51,7 +51,7 @@ fn expected_origin() -> Result<String, String> {
 
 fn cache_path() -> Result<PathBuf, String> {
     dirs::data_local_dir()
-        .map(|path| path.join("CodexBar").join("gemini-web-bridge-poc.json"))
+        .map(|path| path.join("CodexBar").join("gemini-apps-browser.json"))
         .ok_or_else(|| "could not locate LOCALAPPDATA".to_string())
 }
 
@@ -127,7 +127,8 @@ fn write_cache(push: &BrowserPush) -> Result<PathBuf, String> {
         .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
     let bytes = serde_json::to_vec_pretty(push)
         .map_err(|error| format!("cannot serialize cache: {error}"))?;
-    fs::write(&path, bytes).map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+    codexbar::cli::dashboard::write_atomic(&path, &bytes)
+        .map_err(|error| format!("cannot atomically write {}: {error}", path.display()))?;
     Ok(path)
 }
 

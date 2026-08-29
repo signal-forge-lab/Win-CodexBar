@@ -2,6 +2,7 @@ const HOST_NAME = 'com.codexbar.gemini_web_bridge_poc';
 const QUOTA_MESSAGE = 'codexbar:gemini-apps-poc:quota';
 const REFRESH_MESSAGE = 'codexbar:gemini-apps-poc:refresh';
 const CACHE_KEY = 'codexbarGeminiAppsPocLastPush';
+const MANAGED_TAB_KEY = 'codexbarGeminiAppsManagedTabId';
 const REFRESH_ALARM = 'codexbar-gemini-apps-poc-refresh';
 const REFRESH_INTERVAL_MINUTES = 3;
 
@@ -77,8 +78,34 @@ function refreshGeminiTab(tab) {
 
 function refreshOpenGeminiTabs() {
   chrome.tabs.query({ url: ['https://gemini.google.com/*'] }, (tabs) => {
-    void chrome.runtime.lastError;
-    for (const tab of tabs || []) refreshGeminiTab(tab);
+    if (chrome.runtime.lastError) return;
+    const matching = tabs || [];
+    if (matching.length > 0) {
+      for (const tab of matching) refreshGeminiTab(tab);
+      return;
+    }
+
+    chrome.storage.local.get(MANAGED_TAB_KEY, (stored) => {
+      if (chrome.runtime.lastError) return;
+      const managedTabId = stored[MANAGED_TAB_KEY];
+      if (Number.isInteger(managedTabId)) {
+        chrome.tabs.get(managedTabId, () => {
+          if (!chrome.runtime.lastError) return;
+          chrome.storage.local.remove(MANAGED_TAB_KEY, () => void chrome.runtime.lastError);
+          createManagedUsageTab();
+        });
+        return;
+      }
+      createManagedUsageTab();
+    });
+  });
+}
+
+function createManagedUsageTab() {
+  chrome.tabs.create({ url: 'https://gemini.google.com/usage', active: false }, (tab) => {
+    if (chrome.runtime.lastError || tab?.id == null) return;
+    chrome.storage.local.set({ [MANAGED_TAB_KEY]: tab.id }, () => void chrome.runtime.lastError);
+    chrome.tabs.update(tab.id, { autoDiscardable: false }, () => void chrome.runtime.lastError);
   });
 }
 
@@ -121,6 +148,13 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.idle.onStateChanged.addListener((state) => {
   if (state === 'active') refreshOpenGeminiTabs();
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  chrome.storage.local.get(MANAGED_TAB_KEY, (stored) => {
+    if (chrome.runtime.lastError || stored[MANAGED_TAB_KEY] !== tabId) return;
+    chrome.storage.local.remove(MANAGED_TAB_KEY, () => void chrome.runtime.lastError);
+  });
 });
 
 void restoreConnection();

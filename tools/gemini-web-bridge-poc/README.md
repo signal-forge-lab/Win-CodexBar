@@ -1,8 +1,8 @@
-# Gemini Apps Browser Bridge PoC
+# Gemini Apps Browser Bridge
 
-This is an isolated proof of concept for reading `gemini.google.com/usage` without exporting Google cookies or page tokens from the browser.
+This bridge reads `gemini.google.com/usage` without exporting Google cookies or page tokens from the browser. It started as an isolated PoC and is now consumed by CodexBar's `geminiapps` provider.
 
-It is **not** wired into CodexBar's provider catalog yet.
+The existing `gemini` provider remains separate and continues to report Gemini CLI / Code Assist quota.
 
 ## Data flow
 
@@ -12,7 +12,8 @@ Gemini Usage page
   -> sanitized Current / Weekly DTO
   -> Chrome Native Messaging
   -> codexbar-gemini-web-bridge-poc.exe
-  -> %LOCALAPPDATA%\CodexBar\gemini-web-bridge-poc.json
+  -> %LOCALAPPDATA%\CodexBar\gemini-apps-browser.json
+  -> GeminiAppsProvider (`geminiapps`)
 ```
 
 The cache may contain only:
@@ -31,13 +32,13 @@ Cookies, WIZ page tokens, raw HTML, and raw RPC payloads are rejected by the hos
 From the repository root:
 
 ```powershell
-cargo build --manifest-path rust\Cargo.toml --bin codexbar-gemini-web-bridge-poc
+cargo build -p codexbar --release --bin codexbar-gemini-web-bridge-poc
 ```
 
 The binary is written to:
 
 ```text
-target\debug\codexbar-gemini-web-bridge-poc.exe
+target\release\codexbar-gemini-web-bridge-poc.exe
 ```
 
 ## Load the extension
@@ -57,7 +58,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\gemini-web-bridge-poc\host\inst
   -ExtensionId <the-extension-id>
 ```
 
-This writes a user-scoped Native Messaging manifest and registry entry. No admin rights are required.
+This writes a user-scoped Native Messaging manifest and registry entry. It prefers the release host when present and falls back to a debug build for development. No admin rights are required.
 
 To uninstall the registration:
 
@@ -75,7 +76,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\gemini-web-bridge-poc\host\inst
 3. Inspect:
 
 ```text
-%LOCALAPPDATA%\CodexBar\gemini-web-bridge-poc.json
+%LOCALAPPDATA%\CodexBar\gemini-apps-browser.json
 ```
 
 Expected shape is documented in `docs/experiments/gemini-apps-browser-bridge-poc.md`.
@@ -86,16 +87,18 @@ Parser tests use synthetic, secret-free fixtures:
 
 ```powershell
 node --test tools\gemini-web-bridge-poc\tests\parser.test.js
-cargo test --manifest-path rust\Cargo.toml --bin codexbar-gemini-web-bridge-poc
+cargo test -p codexbar --bin codexbar-gemini-web-bridge-poc
 ```
 
-## PoC limitations
+## Bridge limitations
 
 - Gemini's internal RPCs are undocumented.
-- A signed-in Gemini Usage tab is required for fresh readings.
-- Refreshes run against background Gemini tabs. The bridge never activates a
-  tab or moves keyboard/mouse focus. It disables Memory Saver auto-discard for
-  the matching tab and may reload that background tab if Chromium already
-  discarded or froze it.
+- Fresh readings require a signed-in Gemini browser session. Refreshes run
+  against background Gemini tabs. If none exists, the bridge creates one
+  managed `gemini.google.com/usage` tab with `active: false`; if that tab is
+  redirected to sign-in, its tab id is retained so alarms do not create a
+  login-tab loop. The bridge never activates a tab or moves keyboard/mouse
+  focus. It disables Memory Saver auto-discard for matching tabs and may reload
+  a background tab if Chromium already discarded or froze it.
 - The DOM parser is deliberately last-resort and does not infer reset timestamps from localized text.
-- Multi-account selection is not a production UX yet; the payload records the `/u/N` slot so production account pinning can be added later.
+- Multi-account selection is not a dedicated UX yet; the payload records the `/u/N` slot so account pinning can be added later.
