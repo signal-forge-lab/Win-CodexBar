@@ -249,15 +249,23 @@ The existing Gemini CLI provider remains untouched and keeps reporting Code Assi
 - [x] Register the native host for the actual unpacked extension ID.
 - [x] Open `https://gemini.google.com/usage` with the intended account.
 - [x] Verify cache contains only the approved DTO fields.
-- [x] Compare Current / Weekly percentages and reset times against the visible Gemini Usage page.
 - [x] Record which RPC path succeeded (`jSf9Qc`, `VxUbXb`, or DOM).
+- [ ] Optional visual cross-check against the foreground Gemini Usage page. This
+      was intentionally not performed during the PoC because the user required
+      the bridge and validation flow not to steal cursor/focus. It is not needed
+      to establish the Browser -> Native Messaging -> CodexBar data path.
 
 Live proof on 2026-08-29 used Microsoft Edge and a signed-in Gemini Apps Usage page.
-The first-choice `jSf9Qc` path succeeded. The visible page reported a Pro plan with
-Current and Weekly both rounded to `0% used`. The bridge cache reported Current
-`0.0%` and Weekly `0.005576%`; the latter correctly rounds to the visible `0%`.
-The cache reset timestamps were UTC and matched the page's Japan-local reset
-times after conversion (`04:52Z` -> `13:52 JST`, `12:52Z` -> `21:52 JST`).
+The first-choice `jSf9Qc` path succeeded. The bridge cache reported a Pro plan,
+Current `0.0%`, Weekly `0.005576%`, and concrete UTC reset timestamps. A later
+background refresh reproduced the same usage values with a newer `observed_at`,
+which proves the bridge was not only replaying the initial push. The `jSf9Qc`
+ratio semantics were also cross-checked against the audited AI Quota Deck source,
+where the same field is treated as allowance consumed (used percentage).
+
+No foreground/page-visual comparison is claimed here. Microsoft Edge did not
+have CDP enabled, and validation deliberately did not activate the Gemini tab or
+use mouse/keyboard automation merely to obtain a screenshot.
 
 The live cache schema was inspected after capture:
 
@@ -291,7 +299,11 @@ Chromium extension origin and Chromium `--parent-window` argument.
 
 ## Acceptance rule for production
 
-The PoC acceptance rule is now satisfied: a real browser session proved both
-usage windows and the cache was inspected for secret leakage. Production
-integration can proceed as Phase 3, but the undocumented RPCs must continue to
-be treated as a compatibility surface with fail-closed parsing and fixtures.
+The PoC acceptance rule is now satisfied: a real browser session produced both
+usage windows through `jSf9Qc`, repeated background refreshes updated the cache,
+and the cache was inspected for secret leakage. Production integration can
+proceed as Phase 3, but the undocumented RPCs must continue to be treated as a
+compatibility surface with fail-closed parsing and fixtures. A future visual
+cross-check may be performed when it can be done without violating the
+non-foreground-operation requirement; it is not evidence required for the PoC
+transport acceptance above.
