@@ -325,6 +325,7 @@ impl TokenAccountSupport {
             // These providers don't support token accounts
             ProviderId::Codex
             | ProviderId::Gemini
+            | ProviderId::GeminiApps
             | ProviderId::Antigravity
             | ProviderId::Kiro
             | ProviderId::VertexAI

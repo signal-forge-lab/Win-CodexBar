@@ -84,6 +84,15 @@ z.ai Coding Plans accept both `TOKENS_LIMIT` and `CREDIT_LIMIT` rows. The shorte
 Upstream's independent **WidgetKit** provider-widget configuration has no Windows analogue in this repository. Win-CodexBar has no WidgetKit extension; provider cards and tray entries are already independent Windows/Tauri surfaces.
 ## Token-based providers (summary endpoints)
 
+### Gemini Apps
+
+- Provider id: `geminiapps` (aliases `gemini-apps`, `gemini-web`). This is intentionally separate from `gemini`, which remains Gemini CLI / Code Assist quota.
+- Source: the local Gemini Apps Browser Bridge cache. Authentication, Google cookies, WIZ page state, and raw RPC bodies stay inside the signed-in `gemini.google.com` tab; CodexBar reads only sanitized Current/Weekly percentages, reset times, plan, account slot, parser source, and observation time.
+- `Current usage` maps to the primary 5-hour window and `Weekly limit` maps to the secondary 7-day window. The provider accepts only `Auto` / `Web` source modes.
+- The bridge normally refreshes an existing Gemini tab every three minutes without activating it or moving mouse/keyboard focus. If no Gemini tab exists, it may create one managed Usage tab with `active: false`; a sign-in redirect is retained instead of creating repeated login tabs. CodexBar preserves the bridge's real `observed_at` timestamp, so the Providers UI marks data older than 10 minutes as stale. Snapshots older than 24 hours fail closed rather than presenting very old consumer quota as usable data.
+- Stable cache: `%LOCALAPPDATA%\\CodexBar\\gemini-apps-browser.json`. During the PoC-to-provider transition, the previous `gemini-web-bridge-poc.json` filename remains a read-only compatibility fallback.
+- Dashboard: `https://gemini.google.com/usage`. The provider is disabled by default until the Browser Bridge is configured.
+
 ### OrcaRouter
 
 - Provider id: `orcarouter` (aliases `orca`, `orca-router`). Base: `https://api.orcarouter.ai/v1`.

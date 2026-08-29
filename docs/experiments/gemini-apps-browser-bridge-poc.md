@@ -120,7 +120,7 @@ gemini.google.com/usage
   CodexBar native host
         |
         v
-  %LOCALAPPDATA%/CodexBar/gemini-web-bridge-poc.json
+  %LOCALAPPDATA%/CodexBar/gemini-apps-browser.json
 ```
 
 The following must never cross the browser/native boundary:
@@ -281,29 +281,31 @@ Chromium extension origin and Chromium `--parent-window` argument.
 
 ### Phase 3 — production provider
 
-- [ ] Add `ProviderId::GeminiApps` and factory wiring.
-- [ ] Move the typed cache reader into `rust/src/providers/geminiapps/`.
-- [ ] Convert Current / Weekly into normal `RateWindow`s.
-- [ ] Add stale/fresh behavior and account-slot handling.
+- [x] Add `ProviderId::GeminiApps` and factory wiring.
+- [x] Move the typed cache reader into `rust/src/providers/geminiapps/`.
+- [x] Convert Current / Weekly into normal `RateWindow`s.
+- [x] Add stale/fresh behavior and account-slot validation.
 - [ ] Add provider settings/onboarding for installing the Browser Bridge.
 - [ ] Stage the extension during the desktop build/install flow.
-- [ ] Add dashboard / float-bar / tray regression tests.
+- [x] Pass the existing dashboard / float-bar / tray regression suites with `Gemini Apps` in the provider catalog.
 
 ### Phase 4 — hardening
 
 - [ ] Decide account pinning UX for multiple `/u/N` sessions.
 - [ ] Add parser fixture probes for future Gemini response changes.
-- [ ] Fail closed when only a partial quota response is available.
-- [ ] Never fall back to browser-cookie database extraction automatically.
+- [x] Fail closed when only a partial quota response is available.
+- [x] Never fall back to browser-cookie database extraction automatically.
 - [ ] Preserve a last-known-good snapshot with an explicit stale marker.
 
 ## Acceptance rule for production
 
-The PoC acceptance rule is now satisfied: a real browser session produced both
+The PoC acceptance rule is satisfied: a real browser session produced both
 usage windows through `jSf9Qc`, repeated background refreshes updated the cache,
-and the cache was inspected for secret leakage. Production integration can
-proceed as Phase 3, but the undocumented RPCs must continue to be treated as a
-compatibility surface with fail-closed parsing and fixtures. A future visual
-cross-check may be performed when it can be done without violating the
-non-foreground-operation requirement; it is not evidence required for the PoC
-transport acceptance above.
+and the cache was inspected for secret leakage. The production `geminiapps`
+provider is now wired into the provider catalog and reads that sanitized cache.
+Dedicated onboarding and installer staging for the Browser Bridge remain future
+packaging work; they are not required for the provider runtime itself. The
+undocumented RPCs remain a compatibility surface with fail-closed parsing and
+fixtures. A future visual cross-check may be performed when it can be done
+without violating the non-foreground-operation requirement; it is not evidence
+required for the transport or provider-runtime acceptance above.

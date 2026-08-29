@@ -42,7 +42,9 @@ if ($Uninstall) {
 }
 
 if (-not $HostExe) {
-    $HostExe = Join-Path $Root 'target\debug\codexbar-gemini-web-bridge-poc.exe'
+    $ReleaseHost = Join-Path $Root 'target\release\codexbar-gemini-web-bridge-poc.exe'
+    $DebugHost = Join-Path $Root 'target\debug\codexbar-gemini-web-bridge-poc.exe'
+    $HostExe = if (Test-Path $ReleaseHost -PathType Leaf) { $ReleaseHost } else { $DebugHost }
 }
 $HostExe = [System.IO.Path]::GetFullPath($HostExe)
 if (-not (Test-Path $HostExe -PathType Leaf)) {
@@ -54,7 +56,7 @@ $Origin | Set-Content -LiteralPath $OriginPath -Encoding ASCII -NoNewline
 
 $manifest = [ordered]@{
     name = $HostName
-    description = 'CodexBar Gemini Apps Browser Bridge PoC'
+    description = 'CodexBar Gemini Apps Browser Bridge'
     path = $HostExe
     type = 'stdio'
     allowed_origins = @($Origin)

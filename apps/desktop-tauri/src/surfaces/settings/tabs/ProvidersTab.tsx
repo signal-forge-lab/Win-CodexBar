@@ -221,6 +221,7 @@ function providerSourceHintShort(
     case "notion":
     case "t3chat":
     case "commandcode":
+    case "geminiapps":
       return t("ProviderSourceWebShort");
     case "gemini":
     case "antigravity":

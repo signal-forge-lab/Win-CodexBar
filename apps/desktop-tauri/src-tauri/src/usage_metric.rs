@@ -100,10 +100,9 @@ fn automatic_window(
     if provider == Some(ProviderId::OrcaRouter)
         && snapshot.source_label == "api+web"
         && snapshot.primary.is_informational
+        && let Some(window) = cost_window(snapshot)
     {
-        if let Some(window) = cost_window(snapshot) {
-            return Some(window);
-        }
+        return Some(window);
     }
 
     if provider == Some(ProviderId::Claude) {
