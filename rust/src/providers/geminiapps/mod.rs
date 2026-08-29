@@ -188,20 +188,40 @@ impl GeminiAppsProvider {
         Self::validate_window(&cache.payload.current, "Current usage")?;
         Self::validate_window(&cache.payload.weekly, "Weekly limit")?;
 
-        let current = RateWindow::with_details(
-            cache.payload.current.used_percent,
-            Some(CURRENT_WINDOW_MINUTES),
-            Self::parse_reset(cache.payload.current.resets_at.as_deref())?,
-            None,
-        );
-        let weekly = RateWindow::with_details(
-            cache.payload.weekly.used_percent,
-            Some(WEEKLY_WINDOW_MINUTES),
-            Self::parse_reset(cache.payload.weekly.resets_at.as_deref())?,
-            None,
-        );
+        let current_reset = Self::parse_reset(cache.payload.current.resets_at.as_deref())?;
+        let weekly_reset = Self::parse_reset(cache.payload.weekly.resets_at.as_deref())?;
 
-        let mut usage = UsageSnapshot::new(current).with_secondary(weekly);
+        let current_expired = current_reset.as_ref().is_some_and(|reset| reset <= &now);
+        let weekly_expired = weekly_reset.as_ref().is_some_and(|reset| reset <= &now);
+        if current_expired && weekly_expired {
+            return Err(ProviderError::Other(
+                "Gemini Apps Browser Bridge quota windows have both expired. Wait for a fresh background bridge snapshot."
+                    .into(),
+            ));
+        }
+
+        let current = if current_expired {
+            let mut window = RateWindow::informational("");
+            window.window_minutes = Some(CURRENT_WINDOW_MINUTES);
+            window
+        } else {
+            RateWindow::with_details(
+                cache.payload.current.used_percent,
+                Some(CURRENT_WINDOW_MINUTES),
+                current_reset,
+                None,
+            )
+        };
+
+        let mut usage = UsageSnapshot::new(current);
+        if !weekly_expired {
+            usage = usage.with_secondary(RateWindow::with_details(
+                cache.payload.weekly.used_percent,
+                Some(WEEKLY_WINDOW_MINUTES),
+                weekly_reset,
+                None,
+            ));
+        }
         usage.updated_at = observed_at;
         if let Some(plan) = cache.payload.plan {
             usage = usage.with_login_method(plan);
@@ -360,5 +380,32 @@ mod tests {
             GeminiAppsProvider::cache_path_for_test(root, false),
             root.join(LEGACY_POC_CACHE_FILENAME)
         );
+    }
+
+    #[test]
+    fn expired_current_window_degrades_to_weekly_without_fake_resetting_state() {
+        let now = DateTime::parse_from_rfc3339("2026-08-29T13:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let usage =
+            GeminiAppsProvider::usage_from_cache(&cache(now.timestamp() - 60), now).unwrap();
+
+        assert!(usage.primary.is_informational);
+        assert_eq!(usage.primary.used_percent, 0.0);
+        assert_eq!(usage.primary.window_minutes, Some(CURRENT_WINDOW_MINUTES));
+        assert!(usage.primary.resets_at.is_none());
+        assert_eq!(usage.secondary.as_ref().unwrap().used_percent, 37.25);
+        assert_eq!(
+            usage.secondary.as_ref().unwrap().window_minutes,
+            Some(WEEKLY_WINDOW_MINUTES)
+        );
+    }
+
+    #[test]
+    fn both_expired_windows_fail_closed() {
+        let now = DateTime::parse_from_rfc3339("2026-09-03T13:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert!(GeminiAppsProvider::usage_from_cache(&cache(now.timestamp() - 60), now).is_err());
     }
 }
