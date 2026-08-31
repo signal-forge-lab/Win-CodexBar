@@ -1,6 +1,6 @@
 # Gemini Apps Browser Bridge
 
-This bridge reads `gemini.google.com/usage` without exporting Google cookies or page tokens from the browser. It started as an isolated PoC and is now consumed by CodexBar's `geminiapps` provider.
+This bridge reads `gemini.google.com/usage` without exporting Google cookies or page tokens from the browser. It started as an isolated PoC and is now consumed by CodexBar's `geminiapps` provider. The extension is shown as **CodexBar Gemini Apps Bridge** in Chromium extension managers.
 
 The existing `gemini` provider remains separate and continues to report Gemini CLI / Code Assist quota.
 
@@ -49,6 +49,8 @@ target\release\codexbar-gemini-web-bridge-poc.exe
 4. Select `tools\gemini-web-bridge-poc\extension`.
 5. Copy the resulting extension ID.
 
+Repeat **Load unpacked** for every Chrome/Edge profile that may hold the signed-in Gemini account you want CodexBar to read. If a profile reports a different extension ID, register that ID too; the installer merges allowed origins instead of replacing the previously registered Edge/Chrome IDs.
+
 The PoC intentionally does not ship a fixed manifest key. This prevents us from pretending an unpacked development ID is a production identity.
 
 ## Register Native Messaging
@@ -57,6 +59,8 @@ The PoC intentionally does not ship a fixed manifest key. This prevents us from 
 powershell -ExecutionPolicy Bypass -File .\tools\gemini-web-bridge-poc\host\install-native-host.ps1 `
   -ExtensionId <the-extension-id>
 ```
+
+Run the same command once for each distinct extension ID shown by your Chromium profiles. Existing registered IDs are preserved.
 
 This writes a user-scoped Native Messaging manifest and registry entry. It prefers the release host when present and falls back to a debug build for development. No admin rights are required.
 

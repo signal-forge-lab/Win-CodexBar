@@ -42,11 +42,49 @@ fn state_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "could not locate LOCALAPPDATA".to_string())
 }
 
-fn expected_origin() -> Result<String, String> {
-    let path = state_dir()?.join("allowed-origin.txt");
-    fs::read_to_string(&path)
-        .map(|value| value.trim().to_string())
-        .map_err(|error| format!("cannot read {}: {error}", path.display()))
+fn valid_extension_origin(origin: &str) -> bool {
+    let Some(id) = origin
+        .strip_prefix("chrome-extension://")
+        .and_then(|value| value.strip_suffix('/'))
+    else {
+        return false;
+    };
+    id.len() == 32 && id.chars().all(|character| matches!(character, 'a'..='p'))
+}
+
+fn parse_allowed_origins(value: &str) -> Vec<String> {
+    let mut origins = value
+        .lines()
+        .map(str::trim)
+        .filter(|origin| valid_extension_origin(origin))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    origins.sort();
+    origins.dedup();
+    origins
+}
+
+fn expected_origins() -> Result<Vec<String>, String> {
+    let state = state_dir()?;
+    let multi_path = state.join("allowed-origins.txt");
+    let legacy_path = state.join("allowed-origin.txt");
+    let (path, value) = match fs::read_to_string(&multi_path) {
+        Ok(value) => (multi_path, value),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let value = fs::read_to_string(&legacy_path)
+                .map_err(|error| format!("cannot read {}: {error}", legacy_path.display()))?;
+            (legacy_path, value)
+        }
+        Err(error) => return Err(format!("cannot read {}: {error}", multi_path.display())),
+    };
+    let origins = parse_allowed_origins(&value);
+    if origins.is_empty() {
+        return Err(format!(
+            "{} contains no valid extension origins",
+            path.display()
+        ));
+    }
+    Ok(origins)
 }
 
 fn cache_path() -> Result<PathBuf, String> {
@@ -161,8 +199,8 @@ fn write_frame(writer: &mut impl Write, value: &Value) -> io::Result<()> {
 }
 
 fn run(origin: &str) -> Result<(), String> {
-    let expected = expected_origin()?;
-    if origin != expected {
+    let expected = expected_origins()?;
+    if !expected.iter().any(|allowed| allowed == origin) {
         return Err(format!("extension origin is not allowed: {origin}"));
     }
 
@@ -278,5 +316,15 @@ mod tests {
             read_frame(&mut Cursor::new(prefix)).unwrap_err().kind(),
             io::ErrorKind::InvalidData
         );
+    }
+
+    #[test]
+    fn multiple_extension_origins_are_strictly_validated_and_deduplicated() {
+        let first = "chrome-extension://adakkbinjhpjcpiagphgeldfmcmmpdcc/";
+        let second = "chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/";
+        let origins = parse_allowed_origins(&format!(
+            "{first}\ninvalid\n{second}\n{first}\nchrome-extension://ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ/\n"
+        ));
+        assert_eq!(origins, vec![first.to_string(), second.to_string()]);
     }
 }

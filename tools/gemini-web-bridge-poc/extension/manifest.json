@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "CodexBar Gemini Apps Bridge PoC",
-  "version": "0.1.0",
-  "description": "PoC: sends only Gemini Apps usage percentages and reset times to a local CodexBar native host.",
+  "name": "CodexBar Gemini Apps Bridge",
+  "version": "0.2.0",
+  "description": "Sends only Gemini Apps usage percentages and reset times to the local CodexBar native host.",
   "permissions": ["alarms", "idle", "storage", "nativeMessaging"],
   "host_permissions": ["https://gemini.google.com/*"],
   "action": {
-    "default_title": "Connect CodexBar Gemini Apps PoC"
+    "default_title": "Connect CodexBar Gemini Apps"
   },
   "background": {
     "service_worker": "background.js"
