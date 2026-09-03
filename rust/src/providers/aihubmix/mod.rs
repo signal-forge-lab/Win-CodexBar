@@ -225,28 +225,13 @@ impl Provider for AiHubMixProvider {
     async fn fetch_usage(&self, ctx: &FetchContext) -> Result<ProviderFetchResult, ProviderError> {
         match ctx.source_mode {
             SourceMode::Auto => {
-                if let Ok(manage_key) = Self::resolve_manage_key(ctx.api_key.as_deref()) {
-                    let client = crate::core::credentialed_http_client_builder()
-                        .timeout(std::time::Duration::from_secs(ctx.web_timeout.max(1)))
-                        .build()
-                        .map_err(|error| ProviderError::Other(error.to_string()))?;
-                    match fetch_self(&client, &manage_key).await {
-                        Ok((values, group)) => {
-                            return Ok(result_from_values(values, group, "api"));
-                        }
-                        Err(error) => tracing::debug!(
-                            %error,
-                            "AIHubMix Manage Key path unavailable; trying signed-in browser CDP"
-                        ),
-                    }
-                }
-                fetch_browser(ctx.web_timeout).await.map_err(|error| match error {
-                    ProviderError::NoCookies => ProviderError::Other(
-                        "No authenticated AIHubMix browser session found. Sign in to console.aihubmix.com in an approved Edge/Chrome CDP profile, or configure an AIHubMix Manage Key."
-                            .to_string(),
-                    ),
-                    other => other,
-                })
+                let manage_key = Self::resolve_manage_key(ctx.api_key.as_deref())?;
+                let client = crate::core::credentialed_http_client_builder()
+                    .timeout(std::time::Duration::from_secs(ctx.web_timeout.max(1)))
+                    .build()
+                    .map_err(|error| ProviderError::Other(error.to_string()))?;
+                let (values, group) = fetch_self(&client, &manage_key).await?;
+                Ok(result_from_values(values, group, "api"))
             }
             SourceMode::Web => fetch_browser(ctx.web_timeout).await,
             SourceMode::OAuth | SourceMode::Cli => {
