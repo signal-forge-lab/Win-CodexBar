@@ -128,14 +128,11 @@ cargo test -p codexbar --bin codexbar-gemini-web-bridge-poc
 
 - Gemini's internal RPCs are undocumented.
 - Fresh readings require signed-in Gemini / AI Studio browser sessions.
-  Refreshes run against background Gemini/AI Studio tabs. If no Gemini Apps tab
-  exists, the bridge creates one managed `gemini.google.com/usage` tab with
-  `active: false`. If no AI Studio Spend tab exists, it likewise creates one
-  managed `aistudio.google.com/spend` tab with `active: false`. Redirected sign-in
-  tabs keep their managed tab ids so alarms do not create login-tab loops. The
-  bridge never activates a tab or moves keyboard/mouse focus. It disables Memory
-  Saver auto-discard for matching tabs
-  and may reload a background tab if Chromium already discarded or froze it.
+  Refreshes run only against already-open matching tabs. If no Gemini Apps or
+  AI Studio Spend tab exists, the bridge does nothing and never creates one on
+  its own. The bridge never activates a tab or moves keyboard/mouse focus. It
+  disables Memory Saver auto-discard for matching tabs and may reload a matching
+  background tab if Chromium already discarded or froze it.
 - The AI Studio DOM parser accepts the current English/Japanese Spend layouts,
   including split label/value rows. It records net `Total cost` / `総費用`, not
   pre-discount charges, and leaves the spend cap unknown when the UI only offers

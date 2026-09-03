@@ -253,6 +253,7 @@ function providerSourceHintShort(
     case "xai":
     case "fireworks":
     case "orcarouter":
+    case "aihubmix":
       return t("ProviderSourceApiShort");
     case "kiro":
       return t("ProviderSourceKiroEnvShort");

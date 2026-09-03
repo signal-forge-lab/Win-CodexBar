@@ -70,4 +70,5 @@ export const TEST_PROVIDER_CATALOG: Array<[string, string]> = [
   ["qwencloud", "Qwen Cloud"],
   ["notion", "Notion AI"],
   ["orcarouter", "OrcaRouter"],
+  ["aihubmix", "AIHubMix"],
 ];

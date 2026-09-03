@@ -7,6 +7,7 @@
 
 pub mod abacus;
 pub mod aiand;
+pub mod aihubmix;
 pub mod alibaba;
 pub mod alibabatokenplan;
 pub mod amp;
@@ -83,6 +84,7 @@ pub mod zoommate;
 // Re-export provider implementations
 pub use abacus::AbacusProvider;
 pub use aiand::AiAndProvider;
+pub use aihubmix::AiHubMixProvider;
 pub use alibaba::{AlibabaProvider, AlibabaRegion};
 pub use alibabatokenplan::{AlibabaTokenPlanProvider, AlibabaTokenPlanRegion};
 pub use amp::AmpProvider;

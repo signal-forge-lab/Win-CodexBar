@@ -222,6 +222,7 @@ export const PROVIDER_ICON_REGISTRY: Record<string, ProviderIcon> = {
   notion:      { id: "notion",      brandColor: "#337EA9", fallbackLetter: "N", svgPath: RAW.notion },
   xai:         { id: "xai",         brandColor: "#8e8e93", fallbackLetter: "X", svgPath: RAW.xai },
   orcarouter:  { id: "orcarouter",  brandColor: "#0891b2", fallbackLetter: "O" },
+  aihubmix:    { id: "aihubmix",    brandColor: "#2563eb", fallbackLetter: "A" },
 };
 
 const ALIASES: Record<string, string> = {

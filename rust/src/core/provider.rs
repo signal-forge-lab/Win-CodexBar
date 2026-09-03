@@ -85,6 +85,7 @@ pub enum ProviderId {
     Xai,
     Fireworks,
     OrcaRouter,
+    AiHubMix,
 }
 
 impl ProviderId {
@@ -164,6 +165,7 @@ impl ProviderId {
             ProviderId::Xai,
             ProviderId::Fireworks,
             ProviderId::OrcaRouter,
+            ProviderId::AiHubMix,
         ]
     }
 
@@ -243,6 +245,7 @@ impl ProviderId {
             ProviderId::Notion => "notion",
             ProviderId::Xai => "xai",
             ProviderId::OrcaRouter => "orcarouter",
+            ProviderId::AiHubMix => "aihubmix",
         }
     }
 
@@ -324,6 +327,7 @@ impl ProviderId {
             ProviderId::Notion => "Notion AI",
             ProviderId::Xai => "xAI",
             ProviderId::OrcaRouter => "OrcaRouter",
+            ProviderId::AiHubMix => "AIHubMix",
         }
     }
 
@@ -408,6 +412,7 @@ impl ProviderId {
             ProviderId::Notion => Some("app.notion.com"),
             ProviderId::Xai => None,
             ProviderId::OrcaRouter => Some("www.orcarouter.ai"),
+            ProviderId::AiHubMix => None,
         }
     }
 
@@ -506,6 +511,7 @@ impl ProviderId {
             "zoommate" | "zoom-mate" | "zoom mate" => Some(ProviderId::ZoomMate),
             "notion" | "notion-ai" | "notionai" | "notion ai" => Some(ProviderId::Notion),
             "orcarouter" | "orca" | "orca-router" => Some(ProviderId::OrcaRouter),
+            "aihubmix" | "aihub-mix" | "ai hub mix" => Some(ProviderId::AiHubMix),
             _ => None,
         }
     }
@@ -813,6 +819,8 @@ pub fn cli_name_map() -> HashMap<&'static str, ProviderId> {
     map.insert("sub-2-api", ProviderId::Sub2Api);
     map.insert("notion-ai", ProviderId::Notion);
     map.insert("notionai", ProviderId::Notion);
+    map.insert("aihub-mix", ProviderId::AiHubMix);
+    map.insert("ai hub mix", ProviderId::AiHubMix);
     map
 }
 
@@ -894,6 +902,7 @@ pub fn brand_color(id: ProviderId) -> &'static str {
         ProviderId::Xai => "#8E8E93",
         ProviderId::Fireworks => "#F25B1C",
         ProviderId::OrcaRouter => "#0891B2",
+        ProviderId::AiHubMix => "#2563EB",
     }
 }
 
@@ -904,7 +913,7 @@ mod tests {
     #[test]
     fn test_provider_id_all() {
         let all = ProviderId::all();
-        assert_eq!(all.len(), 73);
+        assert_eq!(all.len(), 74);
         assert!(all.contains(&ProviderId::Claude));
         assert!(all.contains(&ProviderId::Codex));
         assert!(all.contains(&ProviderId::Fireworks));
@@ -956,6 +965,7 @@ mod tests {
         assert!(all.contains(&ProviderId::Notion));
         assert!(all.contains(&ProviderId::Xai));
         assert!(all.contains(&ProviderId::OrcaRouter));
+        assert!(all.contains(&ProviderId::AiHubMix));
         assert!(all.contains(&ProviderId::GeminiApps));
         assert!(all.contains(&ProviderId::GeminiApi));
     }
@@ -1018,6 +1028,25 @@ mod tests {
             ProviderId::OrcaRouter.cookie_domain(),
             Some("www.orcarouter.ai")
         );
+    }
+
+    #[test]
+    fn aihubmix_metadata_and_aliases() {
+        assert_eq!(ProviderId::AiHubMix.cli_name(), "aihubmix");
+        assert_eq!(ProviderId::AiHubMix.display_name(), "AIHubMix");
+        assert_eq!(
+            ProviderId::from_cli_name("aihubmix"),
+            Some(ProviderId::AiHubMix)
+        );
+        assert_eq!(
+            ProviderId::from_cli_name("aihub-mix"),
+            Some(ProviderId::AiHubMix)
+        );
+        assert_eq!(
+            ProviderId::from_cli_name("ai hub mix"),
+            Some(ProviderId::AiHubMix)
+        );
+        assert_eq!(ProviderId::AiHubMix.cookie_domain(), None);
     }
 
     #[test]

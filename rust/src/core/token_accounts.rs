@@ -363,7 +363,8 @@ impl TokenAccountSupport {
             | ProviderId::LongCat
             | ProviderId::Wayfinder
             | ProviderId::QwenCloud
-            | ProviderId::Fireworks => None,
+            | ProviderId::Fireworks
+            | ProviderId::AiHubMix => None,
         }
     }
 
