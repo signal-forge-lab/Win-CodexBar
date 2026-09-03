@@ -27,7 +27,7 @@ const HAS_DASHBOARD = new Set([
   "abacus", "alibaba", "alibabatokenplan", "amp", "augment",
   "azureopenai", "bedrock", "claude", "codex", "codebuff",
   "aiand", "commandcode", "copilot", "crof", "crossmodel", "cursor", "deepgram", "deepinfra", "deepseek", "zenmux", "clinepass", "longcat", "neuralwatt", "zoommate",
-  "doubao", "elevenlabs", "factory", "gemini", "geminiapps", "grok", "groq",
+  "doubao", "elevenlabs", "factory", "gemini", "geminiapps", "gemini-api", "grok", "groq",
   "infini", "jetbrains", "kilo", "kimi", "kimik2", "kiro", "manus",
   "mimo", "minimax", "mistral", "nanogpt", "notion", "ollama", "openaiapi",
   "opencode", "opencodego", "openrouter", "orcarouter", "perplexity", "qoder", "codebuddy", "sakana", "stepfun",
@@ -38,7 +38,7 @@ const HAS_DASHBOARD = new Set([
 const HAS_STATUS_PAGE = new Set([
   "alibabatokenplan", "amp", "augment", "azureopenai", "bedrock",
   "claude", "codex", "copilot", "deepgram", "deepinfra", "deepseek", "zenmux", "clinepass", "longcat", "neuralwatt", "zoommate", "elevenlabs",
-  "gemini", "grok", "groq", "kiro", "mistral", "openaiapi",
+  "gemini", "gemini-api", "grok", "groq", "kiro", "mistral", "openaiapi",
   "openrouter", "vertexai", "windsurf", "xai",
 ]);
 

@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const parser = require('../extension/gemini-parser.js');
+const spendParser = require('../extension/aistudio-parser.js');
 
 test('parses AI Quota Deck style jSf9Qc current and weekly windows', () => {
   const inner = [
@@ -50,4 +51,31 @@ test('partial or malformed payloads fail closed', () => {
   assert.equal(parser.parseJSf9Qc('not json jSf9Qc'), null);
   assert.equal(parser.parseVxUbXb('[]'), null);
   assert.equal(parser.parseDomText('Current usage 10% used'), null);
+});
+
+test('parses sanitized AI Studio spend without inventing quota', () => {
+  const result = spendParser.parseSpendText([
+    'Current period spend: $12.34 USD',
+    'Spending limit: $50.00 USD',
+    'Billing period: Current month',
+    'Project name: Demo Project'
+  ].join('\n'));
+  assert.deepEqual(result, {
+    used: 12.34,
+    limit: 50,
+    currency: 'USD',
+    period: 'Current month',
+    resets_at: null,
+    scope: 'Project Demo Project',
+    source: 'dom'
+  });
+});
+
+test('AI Studio spend parser fails closed on partial or conflicting money', () => {
+  assert.equal(spendParser.parseSpendText('Spending limit: $50 USD'), null);
+  assert.equal(
+    spendParser.parseSpendText('Current period spend: $12 USD\nSpending limit: €50 EUR'),
+    null
+  );
+  assert.equal(spendParser.parseMoney('$12 EUR'), null);
 });

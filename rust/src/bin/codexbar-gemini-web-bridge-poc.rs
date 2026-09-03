@@ -11,7 +11,7 @@ const MAX_FRAME_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-struct BrowserPush {
+struct GeminiAppsPush {
     version: u32,
     provider: String,
     observed_at: i64,
@@ -34,6 +34,50 @@ struct QuotaWindow {
     label: String,
     used_percent: f64,
     resets_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct GeminiApiSpendPush {
+    version: u32,
+    provider: String,
+    observed_at: i64,
+    payload: GeminiApiSpendPayload,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct GeminiApiSpendPayload {
+    used: f64,
+    limit: Option<f64>,
+    currency: String,
+    period: String,
+    resets_at: Option<String>,
+    scope: Option<String>,
+    source: String,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(untagged)]
+enum BrowserPush {
+    GeminiApps(GeminiAppsPush),
+    GeminiApi(GeminiApiSpendPush),
+}
+
+impl BrowserPush {
+    fn provider(&self) -> &str {
+        match self {
+            Self::GeminiApps(push) => &push.provider,
+            Self::GeminiApi(push) => &push.provider,
+        }
+    }
+
+    fn observed_at(&self) -> i64 {
+        match self {
+            Self::GeminiApps(push) => push.observed_at,
+            Self::GeminiApi(push) => push.observed_at,
+        }
+    }
 }
 
 fn state_dir() -> Result<PathBuf, String> {
@@ -87,9 +131,14 @@ fn expected_origins() -> Result<Vec<String>, String> {
     Ok(origins)
 }
 
-fn cache_path() -> Result<PathBuf, String> {
+fn cache_path(provider: &str) -> Result<PathBuf, String> {
+    let filename = match provider {
+        "gemini-apps" => "gemini-apps-browser.json",
+        "gemini-api" => "gemini-api-spend-browser.json",
+        other => return Err(format!("unsupported provider: {other}")),
+    };
     dirs::data_local_dir()
-        .map(|path| path.join("CodexBar").join("gemini-apps-browser.json"))
+        .map(|path| path.join("CodexBar").join(filename))
         .ok_or_else(|| "could not locate LOCALAPPDATA".to_string())
 }
 
@@ -106,7 +155,7 @@ fn validate_window(window: &QuotaWindow, expected_label: &str) -> bool {
         && validate_reset(&window.resets_at)
 }
 
-fn validate_push(push: &BrowserPush) -> Result<(), String> {
+fn validate_gemini_apps_push(push: &GeminiAppsPush) -> Result<(), String> {
     if push.version != 1 {
         return Err(format!("unsupported message version: {}", push.version));
     }
@@ -150,14 +199,28 @@ fn validate_push(push: &BrowserPush) -> Result<(), String> {
 }
 
 fn parse_push(body: &[u8]) -> Result<BrowserPush, String> {
-    let push: BrowserPush = serde_json::from_slice(body)
+    let value: Value = serde_json::from_slice(body)
         .map_err(|error| format!("invalid browser message JSON: {error}"))?;
-    validate_push(&push)?;
-    Ok(push)
+    match value.get("provider").and_then(Value::as_str) {
+        Some("gemini-apps") => {
+            let push: GeminiAppsPush = serde_json::from_value(value)
+                .map_err(|error| format!("invalid Gemini Apps browser message: {error}"))?;
+            validate_gemini_apps_push(&push)?;
+            Ok(BrowserPush::GeminiApps(push))
+        }
+        Some("gemini-api") => {
+            let push: GeminiApiSpendPush = serde_json::from_value(value)
+                .map_err(|error| format!("invalid Gemini API browser message: {error}"))?;
+            validate_gemini_api_push(&push)?;
+            Ok(BrowserPush::GeminiApi(push))
+        }
+        Some(provider) => Err(format!("unsupported provider: {provider}")),
+        None => Err("browser message is missing provider".to_string()),
+    }
 }
 
 fn write_cache(push: &BrowserPush) -> Result<PathBuf, String> {
-    let path = cache_path()?;
+    let path = cache_path(push.provider())?;
     let parent = path
         .parent()
         .ok_or_else(|| "cache path has no parent".to_string())?;
@@ -168,6 +231,45 @@ fn write_cache(push: &BrowserPush) -> Result<PathBuf, String> {
     codexbar::cli::dashboard::write_atomic(&path, &bytes)
         .map_err(|error| format!("cannot atomically write {}: {error}", path.display()))?;
     Ok(path)
+}
+
+fn validate_gemini_api_push(push: &GeminiApiSpendPush) -> Result<(), String> {
+    if push.version != 1 || push.provider != "gemini-api" {
+        return Err("unsupported Gemini API message version/provider".to_string());
+    }
+    if push.observed_at <= 0 {
+        return Err("observed_at must be a positive Unix timestamp".to_string());
+    }
+    let payload = &push.payload;
+    if !payload.used.is_finite() || payload.used < 0.0 {
+        return Err("used must be a finite non-negative amount".to_string());
+    }
+    if payload
+        .limit
+        .is_some_and(|limit| !limit.is_finite() || limit < 0.0)
+    {
+        return Err("limit must be absent or a finite non-negative amount".to_string());
+    }
+    if !matches!(payload.currency.as_str(), "USD" | "EUR" | "GBP" | "JPY") {
+        return Err("unsupported Gemini API currency".to_string());
+    }
+    if payload.period.is_empty() || payload.period.len() > 64 {
+        return Err("period must be 1..=64 bytes".to_string());
+    }
+    if !validate_reset(&payload.resets_at) {
+        return Err("invalid Gemini API reset timestamp".to_string());
+    }
+    if payload
+        .scope
+        .as_ref()
+        .is_some_and(|scope| scope.is_empty() || scope.len() > 64 || scope.contains('@'))
+    {
+        return Err("scope is not a safe display label".to_string());
+    }
+    if payload.source != "dom" {
+        return Err("unsupported Gemini API parser source".to_string());
+    }
+    Ok(())
 }
 
 fn read_frame(reader: &mut impl Read) -> io::Result<Option<Vec<u8>>> {
@@ -219,8 +321,8 @@ fn run(origin: &str) -> Result<(), String> {
         }) {
             Ok((push, path)) => serde_json::json!({
                 "ok": true,
-                "provider": push.provider,
-                "observed_at": push.observed_at,
+                "provider": push.provider(),
+                "observed_at": push.observed_at(),
                 "cache": path.file_name().and_then(|name| name.to_str())
             }),
             Err(error) => serde_json::json!({ "ok": false, "error": error }),
@@ -273,18 +375,55 @@ mod tests {
         .unwrap()
     }
 
+    fn valid_spend_json() -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "provider": "gemini-api",
+            "observed_at": 1_788_400_000,
+            "payload": {
+                "used": 12.34,
+                "limit": 50.0,
+                "currency": "USD",
+                "period": "Current month",
+                "resets_at": null,
+                "scope": "Project Demo",
+                "source": "dom"
+            }
+        }))
+        .unwrap()
+    }
+
     #[test]
     fn accepts_only_the_secret_free_wire_contract() {
         let push = parse_push(&valid_json()).unwrap();
+        let BrowserPush::GeminiApps(push) = push else {
+            panic!("wrong provider")
+        };
         assert_eq!(push.provider, "gemini-apps");
         assert_eq!(push.payload.current.used_percent, 25.0);
         assert_eq!(push.payload.weekly.used_percent, 10.0);
     }
 
     #[test]
+    fn accepts_sanitized_gemini_api_spend_contract() {
+        let push = parse_push(&valid_spend_json()).unwrap();
+        let BrowserPush::GeminiApi(push) = push else {
+            panic!("wrong provider")
+        };
+        assert_eq!(push.payload.used, 12.34);
+        assert_eq!(push.payload.limit, Some(50.0));
+        assert_eq!(push.payload.currency, "USD");
+    }
+
+    #[test]
     fn unknown_token_or_cookie_fields_are_rejected() {
         let mut value: Value = serde_json::from_slice(&valid_json()).unwrap();
         value["payload"]["token"] = Value::String("must-not-cross-boundary".to_string());
+        assert!(parse_push(&serde_json::to_vec(&value).unwrap()).is_err());
+
+        let mut value: Value = serde_json::from_slice(&valid_spend_json()).unwrap();
+        value["payload"]["billing_account_id"] =
+            Value::String("must-not-cross-boundary".to_string());
         assert!(parse_push(&serde_json::to_vec(&value).unwrap()).is_err());
 
         let mut value: Value = serde_json::from_slice(&valid_json()).unwrap();

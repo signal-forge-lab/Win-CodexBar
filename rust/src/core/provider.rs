@@ -18,6 +18,7 @@ pub enum ProviderId {
     Factory,
     Gemini,
     GeminiApps,
+    GeminiApi,
     Antigravity,
     Copilot,
     Zai,
@@ -98,6 +99,7 @@ impl ProviderId {
             ProviderId::Factory,
             ProviderId::Gemini,
             ProviderId::GeminiApps,
+            ProviderId::GeminiApi,
             ProviderId::Antigravity,
             ProviderId::Copilot,
             ProviderId::Zai,
@@ -177,6 +179,7 @@ impl ProviderId {
             ProviderId::Factory => "factory",
             ProviderId::Gemini => "gemini",
             ProviderId::GeminiApps => "geminiapps",
+            ProviderId::GeminiApi => "gemini-api",
             ProviderId::Antigravity => "antigravity",
             ProviderId::Copilot => "copilot",
             ProviderId::Zai => "zai",
@@ -256,6 +259,7 @@ impl ProviderId {
             ProviderId::Factory => "Factory",
             ProviderId::Gemini => "Gemini",
             ProviderId::GeminiApps => "Gemini Apps",
+            ProviderId::GeminiApi => "Gemini API",
             ProviderId::Antigravity => "Antigravity",
             ProviderId::Copilot => "Copilot",
             ProviderId::Zai => "z.ai",
@@ -339,6 +343,7 @@ impl ProviderId {
             ProviderId::Codex => Some("chatgpt.com"),
             ProviderId::Gemini => Some("aistudio.google.com"),
             ProviderId::GeminiApps => None,
+            ProviderId::GeminiApi => None,
             ProviderId::Kiro => Some("kiro.dev"),
             ProviderId::Kimi => Some("kimi.moonshot.cn"),
             ProviderId::KimiK2 => Some("platform.moonshot.cn"),
@@ -422,6 +427,9 @@ impl ProviderId {
             "gemini" | "google" => Some(ProviderId::Gemini),
             "geminiapps" | "gemini-apps" | "gemini apps" | "geminiweb" | "gemini-web" => {
                 Some(ProviderId::GeminiApps)
+            }
+            "gemini-api" | "gemini api" | "geminiapi" | "aistudio-spend" => {
+                Some(ProviderId::GeminiApi)
             }
             "antigravity" | "agy" => Some(ProviderId::Antigravity),
             "copilot" | "github" => Some(ProviderId::Copilot),
@@ -871,6 +879,8 @@ pub fn cli_name_map() -> HashMap<&'static str, ProviderId> {
     map.insert("gemini-apps", ProviderId::GeminiApps);
     map.insert("geminiweb", ProviderId::GeminiApps);
     map.insert("gemini-web", ProviderId::GeminiApps);
+    map.insert("geminiapi", ProviderId::GeminiApi);
+    map.insert("aistudio-spend", ProviderId::GeminiApi);
     map.insert("agy", ProviderId::Antigravity);
     map.insert("github", ProviderId::Copilot);
     map.insert("aws", ProviderId::Kiro);
@@ -930,6 +940,7 @@ pub fn brand_color(id: ProviderId) -> &'static str {
         ProviderId::Factory => "#FF6B35",
         ProviderId::Gemini => "#AB87EA",
         ProviderId::GeminiApps => "#AB87EA",
+        ProviderId::GeminiApi => "#4285F4",
         ProviderId::Antigravity => "#60BA7E",
         ProviderId::Copilot => "#A855F7",
         ProviderId::Zai => "#E85A6A",
@@ -1011,7 +1022,7 @@ mod tests {
     #[test]
     fn test_provider_id_all() {
         let all = ProviderId::all();
-        assert_eq!(all.len(), 72);
+        assert_eq!(all.len(), 73);
         assert!(all.contains(&ProviderId::Claude));
         assert!(all.contains(&ProviderId::Codex));
         assert!(all.contains(&ProviderId::Fireworks));
@@ -1065,6 +1076,7 @@ mod tests {
         assert!(all.contains(&ProviderId::Meta));
         assert!(all.contains(&ProviderId::OrcaRouter));
         assert!(all.contains(&ProviderId::GeminiApps));
+        assert!(all.contains(&ProviderId::GeminiApi));
     }
 
     #[test]
@@ -1083,6 +1095,25 @@ mod tests {
         assert_eq!(
             ProviderId::from_cli_name("gemini-web"),
             Some(ProviderId::GeminiApps)
+        );
+    }
+
+    #[test]
+    fn gemini_api_metadata_and_aliases() {
+        assert_eq!(ProviderId::GeminiApi.cli_name(), "gemini-api");
+        assert_eq!(ProviderId::GeminiApi.display_name(), "Gemini API");
+        assert_eq!(ProviderId::GeminiApi.cookie_domain(), None);
+        assert_eq!(
+            ProviderId::from_cli_name("gemini-api"),
+            Some(ProviderId::GeminiApi)
+        );
+        assert_eq!(
+            ProviderId::from_cli_name("geminiapi"),
+            Some(ProviderId::GeminiApi)
+        );
+        assert_eq!(
+            cli_name_map().get("aistudio-spend"),
+            Some(&ProviderId::GeminiApi)
         );
     }
 

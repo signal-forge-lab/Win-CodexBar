@@ -174,6 +174,7 @@ export const PROVIDER_ICON_REGISTRY: Record<string, ProviderIcon> = {
   factory:     { id: "factory",     brandColor: "#ff6b35", fallbackLetter: "◎", svgPath: RAW.factory },
   gemini:      { id: "gemini",      brandColor: "#ab87ea", fallbackLetter: "✦", svgPath: RAW.gemini },
   geminiapps:  { id: "geminiapps",  brandColor: "#ab87ea", fallbackLetter: "✦", svgPath: RAW.gemini },
+  "gemini-api": { id: "gemini-api", brandColor: "#4285f4", fallbackLetter: "✦", svgPath: RAW.gemini },
   grok:        { id: "grok",        brandColor: "#111827", fallbackLetter: "G", svgPath: RAW.grok },
   groq:        { id: "groq",        brandColor: "#f55036", fallbackLetter: "G", svgPath: RAW.groq },
   jetbrains:   { id: "jetbrains",   brandColor: "#ff3399", fallbackLetter: "J", svgPath: RAW.jetbrains },

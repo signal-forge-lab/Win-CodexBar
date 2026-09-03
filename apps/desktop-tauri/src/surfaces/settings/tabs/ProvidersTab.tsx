@@ -222,6 +222,7 @@ function providerSourceHintShort(
     case "t3chat":
     case "commandcode":
     case "geminiapps":
+    case "gemini-api":
       return t("ProviderSourceWebShort");
     case "gemini":
     case "antigravity":
