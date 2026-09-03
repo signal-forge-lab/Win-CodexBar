@@ -1,6 +1,11 @@
-# Gemini Apps Browser Bridge
+# Gemini Browser Bridge
 
-This bridge reads `gemini.google.com/usage` without exporting Google cookies or page tokens from the browser. It started as an isolated PoC and is now consumed by CodexBar's `geminiapps` provider. The extension is shown as **CodexBar Gemini Apps Bridge** in Chromium extension managers.
+This bridge reads `gemini.google.com/usage` and the signed-in AI Studio
+`/spend` page without exporting Google cookies or page tokens from the browser.
+It started as an isolated PoC and is now consumed by two separate CodexBar
+providers: `geminiapps` for quota percentages and `gemini-api` for API spend.
+The extension is shown as **CodexBar Gemini Apps Bridge** in Chromium extension
+managers.
 
 The existing `gemini` provider remains separate and continues to report Gemini CLI / Code Assist quota.
 
@@ -14,6 +19,13 @@ Gemini Usage page
   -> codexbar-gemini-web-bridge-poc.exe
   -> %LOCALAPPDATA%\CodexBar\gemini-apps-browser.json
   -> GeminiAppsProvider (`geminiapps`)
+
+AI Studio Spend page
+  -> sanitized current-period spend DTO
+  -> Chrome Native Messaging
+  -> codexbar-gemini-web-bridge-poc.exe
+  -> %LOCALAPPDATA%\CodexBar\gemini-api-spend-browser.json
+  -> GeminiApiProvider (`gemini-api`)
 ```
 
 The cache may contain only:
@@ -26,6 +38,11 @@ The cache may contain only:
 - observation time
 
 Cookies, WIZ page tokens, raw HTML, and raw RPC payloads are rejected by the host's typed contract.
+
+The Gemini API spend cache contains only current spend, an optional displayed
+limit, currency, period/reset metadata when present, and a sanitized project
+label. It deliberately does not invent a quota percentage when AI Studio only
+exposes spend.
 
 ## Build the native host
 
@@ -73,7 +90,9 @@ powershell -ExecutionPolicy Bypass -File .\tools\gemini-web-bridge-poc\host\inst
 
 ## Capture a real reading
 
-1. Open `https://gemini.google.com/usage` in the account you want to measure.
+1. Open `https://gemini.google.com/usage` for Gemini Apps quota and/or
+   `https://aistudio.google.com/spend` for Gemini API spend in the account you
+   want to measure.
 2. Keep the Usage tab open for the first capture. `nativeMessaging` is declared
    by the PoC extension, while the native host itself still accepts only the
    exact unpacked extension origin registered by `install-native-host.ps1`.
@@ -81,6 +100,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\gemini-web-bridge-poc\host\inst
 
 ```text
 %LOCALAPPDATA%\CodexBar\gemini-apps-browser.json
+%LOCALAPPDATA%\CodexBar\gemini-api-spend-browser.json
 ```
 
 Expected shape is documented in `docs/experiments/gemini-apps-browser-bridge-poc.md`.
@@ -98,11 +118,13 @@ cargo test -p codexbar --bin codexbar-gemini-web-bridge-poc
 
 - Gemini's internal RPCs are undocumented.
 - Fresh readings require a signed-in Gemini browser session. Refreshes run
-  against background Gemini tabs. If none exists, the bridge creates one
-  managed `gemini.google.com/usage` tab with `active: false`; if that tab is
-  redirected to sign-in, its tab id is retained so alarms do not create a
-  login-tab loop. The bridge never activates a tab or moves keyboard/mouse
-  focus. It disables Memory Saver auto-discard for matching tabs and may reload
-  a background tab if Chromium already discarded or froze it.
+  against background Gemini/AI Studio tabs. If no Gemini Apps tab exists, the
+  bridge creates one managed `gemini.google.com/usage` tab with `active: false`;
+  an AI Studio tab does not suppress that existing Gemini Apps behavior. AI
+  Studio spend capture does not create a tab automatically. If the managed
+  Gemini Apps tab is redirected to sign-in, its tab id is retained so alarms do
+  not create a login-tab loop. The bridge never activates a tab or moves
+  keyboard/mouse focus. It disables Memory Saver auto-discard for matching tabs
+  and may reload a background tab if Chromium already discarded or froze it.
 - The DOM parser is deliberately last-resort and does not infer reset timestamps from localized text.
 - Multi-account selection is not a dedicated UX yet; the payload records the `/u/N` slot so account pinning can be added later.

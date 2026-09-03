@@ -5,6 +5,7 @@ export const TEST_PROVIDER_CATALOG: Array<[string, string]> = [
   ["factory", "Factory"],
   ["gemini", "Gemini"],
   ["geminiapps", "Gemini Apps"],
+  ["gemini-api", "Gemini API"],
   ["antigravity", "Antigravity"],
   ["copilot", "Copilot"],
   ["zai", "z.ai"],
