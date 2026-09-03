@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "CodexBar Gemini Apps Bridge",
-  "version": "0.2.0",
+  "version": "0.2.4",
   "description": "Sends sanitized Gemini Apps quota and Gemini API spend summaries to the local CodexBar native host.",
-  "permissions": ["alarms", "idle", "storage", "nativeMessaging"],
+  "permissions": ["alarms", "idle", "storage", "nativeMessaging", "scripting"],
   "host_permissions": ["https://gemini.google.com/*", "https://aistudio.google.com/spend*"],
   "action": {
     "default_title": "Connect CodexBar Gemini Apps"

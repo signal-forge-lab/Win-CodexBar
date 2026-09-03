@@ -13,6 +13,7 @@ const PROVIDER_TOKEN: Record<string, string> = {
   codex: "--chart-codex",
   gemini: "--chart-gemini",
   geminiapps: "--chart-gemini",
+  "gemini-api": "--chart-gemini-api",
   cursor: "--chart-cursor",
   copilot: "--chart-copilot",
   jetbrains: "--chart-jetbrains",
