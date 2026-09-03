@@ -5,8 +5,6 @@ const REFRESH_MESSAGE = 'codexbar:gemini-apps-poc:refresh';
 const SPEND_REFRESH_MESSAGE = 'codexbar:gemini-api-spend:refresh';
 const CACHE_KEY = 'codexbarGeminiAppsPocLastPush';
 const SPEND_CACHE_KEY = 'codexbarGeminiApiSpendLastPush';
-const MANAGED_TAB_KEY = 'codexbarGeminiAppsManagedTabId';
-const MANAGED_SPEND_TAB_KEY = 'codexbarGeminiApiSpendManagedTabId';
 const REFRESH_ALARM = 'codexbar-gemini-apps-poc-refresh';
 const REFRESH_INTERVAL_MINUTES = 3;
 
@@ -167,44 +165,6 @@ function refreshOpenGeminiTabs() {
     if (chrome.runtime.lastError) return;
     const matching = tabs || [];
     for (const tab of matching) refreshGeminiTab(tab);
-    if (!matching.some((tab) => tab.url?.startsWith('https://gemini.google.com/'))) {
-      ensureManagedTab(MANAGED_TAB_KEY, createManagedUsageTab);
-    }
-    if (!matching.some((tab) => tab.url?.startsWith('https://aistudio.google.com/spend'))) {
-      ensureManagedTab(MANAGED_SPEND_TAB_KEY, createManagedSpendTab);
-    }
-  });
-}
-
-function ensureManagedTab(storageKey, createTab) {
-  chrome.storage.local.get(storageKey, (stored) => {
-    if (chrome.runtime.lastError) return;
-    const managedTabId = stored[storageKey];
-    if (Number.isInteger(managedTabId)) {
-      chrome.tabs.get(managedTabId, () => {
-        if (!chrome.runtime.lastError) return;
-        chrome.storage.local.remove(storageKey, () => void chrome.runtime.lastError);
-        createTab();
-      });
-      return;
-    }
-    createTab();
-  });
-}
-
-function createManagedUsageTab() {
-  chrome.tabs.create({ url: 'https://gemini.google.com/usage', active: false }, (tab) => {
-    if (chrome.runtime.lastError || tab?.id == null) return;
-    chrome.storage.local.set({ [MANAGED_TAB_KEY]: tab.id }, () => void chrome.runtime.lastError);
-    chrome.tabs.update(tab.id, { autoDiscardable: false }, () => void chrome.runtime.lastError);
-  });
-}
-
-function createManagedSpendTab() {
-  chrome.tabs.create({ url: 'https://aistudio.google.com/spend', active: false }, (tab) => {
-    if (chrome.runtime.lastError || tab?.id == null) return;
-    chrome.storage.local.set({ [MANAGED_SPEND_TAB_KEY]: tab.id }, () => void chrome.runtime.lastError);
-    chrome.tabs.update(tab.id, { autoDiscardable: false }, () => void chrome.runtime.lastError);
   });
 }
 
@@ -253,17 +213,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.idle.onStateChanged.addListener((state) => {
   if (state === 'active') refreshOpenGeminiTabs();
-});
-
-chrome.tabs.onRemoved.addListener((tabId) => {
-  chrome.storage.local.get([MANAGED_TAB_KEY, MANAGED_SPEND_TAB_KEY], (stored) => {
-    if (chrome.runtime.lastError) return;
-    for (const key of [MANAGED_TAB_KEY, MANAGED_SPEND_TAB_KEY]) {
-      if (stored[key] === tabId) {
-        chrome.storage.local.remove(key, () => void chrome.runtime.lastError);
-      }
-    }
-  });
 });
 
 chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {

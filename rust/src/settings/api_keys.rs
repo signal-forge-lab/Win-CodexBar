@@ -588,5 +588,16 @@ pub fn get_api_key_providers() -> Vec<ProviderConfigInfo> {
             config_file_path: None,
             dashboard_url: Some("https://www.orcarouter.ai/console"),
         },
+        ProviderConfigInfo {
+            id: ProviderId::AiHubMix,
+            name: "AIHubMix",
+            requires_api_key: true,
+            api_key_env_var: Some("AIHUBMIX_TOKEN / AIHUBMIX_MANAGE_KEY / AIHUBMIX_ACCESS_TOKEN"),
+            api_key_help: Some(
+                "Optional AIHubMix Manage Key for GET /api/user/self. This is the platform/system access token, not a normal model API key. Auto mode falls back to a signed-in console.aihubmix.com browser session through local CDP.",
+            ),
+            config_file_path: None,
+            dashboard_url: Some("https://console.aihubmix.com/topup"),
+        },
     ]
 }

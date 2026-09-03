@@ -225,6 +225,7 @@ export const PROVIDER_ICON_REGISTRY: Record<string, ProviderIcon> = {
   xai:         { id: "xai",         brandColor: "#8e8e93", fallbackLetter: "X", svgPath: RAW.xai },
   meta:        { id: "meta",        brandColor: "#0467DF", fallbackLetter: "M", svgPath: RAW.meta },
   orcarouter:  { id: "orcarouter",  brandColor: "#0891b2", fallbackLetter: "O" },
+  aihubmix:    { id: "aihubmix",    brandColor: "#2563eb", fallbackLetter: "A" },
 };
 
 const ALIASES: Record<string, string> = {

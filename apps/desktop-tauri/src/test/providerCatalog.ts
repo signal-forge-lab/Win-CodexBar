@@ -71,4 +71,5 @@ export const TEST_PROVIDER_CATALOG: Array<[string, string]> = [
   ["notion", "Notion AI"],
   ["meta", "Meta"],
   ["orcarouter", "OrcaRouter"],
+  ["aihubmix", "AIHubMix"],
 ];

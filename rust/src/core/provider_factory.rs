@@ -7,7 +7,7 @@
 
 use super::{Provider, ProviderId};
 use crate::providers::{
-    AbacusProvider, AiAndProvider, AlibabaProvider, AlibabaTokenPlanProvider, AmpProvider,
+    AbacusProvider, AiAndProvider, AiHubMixProvider, AlibabaProvider, AlibabaTokenPlanProvider, AmpProvider,
     AntigravityProvider, AugmentProvider, AzureOpenAIProvider, BedrockProvider, ChutesProvider,
     ClaudeProvider, ClinePassProvider, CodeBuddyProvider, CodebuffProvider, CodexProvider,
     CommandCodeProvider, CopilotProvider, CrofProvider, CrossModelProvider, CursorProvider,
@@ -103,6 +103,7 @@ pub fn instantiate(id: ProviderId) -> Box<dyn Provider> {
         ProviderId::Fireworks => Box::new(FireworksProvider::new()),
         ProviderId::Meta => Box::new(MetaProvider::new()),
         ProviderId::OrcaRouter => Box::new(OrcaRouterProvider::new()),
+        ProviderId::AiHubMix => Box::new(AiHubMixProvider::new()),
     }
 }
 
