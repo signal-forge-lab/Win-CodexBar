@@ -133,6 +133,8 @@ cargo test -p codexbar --bin codexbar-gemini-web-bridge-poc
   its own. The bridge never activates a tab or moves keyboard/mouse focus. It
   disables Memory Saver auto-discard for matching tabs and may reload a matching
   background tab if Chromium already discarded or froze it.
+- CodexBar's Gemini API provider consumes only this Browser Bridge cache during
+  provider refreshes and does not initiate a DevTools/CDP connection itself.
 - The AI Studio DOM parser accepts the current English/Japanese Spend layouts,
   including split label/value rows. It records net `Total cost` / `総費用`, not
   pre-discount charges, and leaves the spend cap unknown when the UI only offers

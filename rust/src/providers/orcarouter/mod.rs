@@ -414,7 +414,9 @@ async fn fetch_browser_wallet_balance(
             }
         }
 
-        if let Ok(wallet_quota) = cdp::fetch_wallet_quota(ctx.web_timeout).await {
+        if should_try_cdp(ctx)
+            && let Ok(wallet_quota) = cdp::fetch_wallet_quota(ctx.web_timeout).await
+        {
             let status = fetch_status(client, WEB_STATUS_URL).await?;
             return wallet_balance_usd(wallet_quota, &status);
         }
@@ -452,6 +454,10 @@ async fn fetch_browser_wallet_balance(
         }
     }
     fetch_wallet_balance(client, WEB_SELF_URL, WEB_STATUS_URL, &cookie).await
+}
+
+fn should_try_cdp(ctx: &FetchContext) -> bool {
+    matches!(ctx.source_mode, SourceMode::Web) && !ctx.auto_prefer_web
 }
 
 /// Fetch and parse both workspace summaries. The subscription call degrades
@@ -834,6 +840,28 @@ mod tests {
             provider.available_sources(),
             vec![SourceMode::Auto, SourceMode::OAuth, SourceMode::Web]
         );
+    }
+
+    #[test]
+    fn automatic_refresh_never_initiates_orcarouter_cdp() {
+        let auto = FetchContext {
+            source_mode: SourceMode::Auto,
+            ..FetchContext::default()
+        };
+        assert!(!should_try_cdp(&auto));
+
+        let web = FetchContext {
+            source_mode: SourceMode::Web,
+            ..FetchContext::default()
+        };
+        assert!(should_try_cdp(&web));
+
+        let token_scoped_web = FetchContext {
+            source_mode: SourceMode::Web,
+            auto_prefer_web: true,
+            ..FetchContext::default()
+        };
+        assert!(!should_try_cdp(&token_scoped_web));
     }
 
     #[test]

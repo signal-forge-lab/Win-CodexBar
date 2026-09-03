@@ -4,13 +4,10 @@
 //! state, billing identifiers, emails, raw HTML and raw network payloads never
 //! cross the Native Messaging boundary.
 
-mod cdp;
-
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 
 use crate::core::{
@@ -19,7 +16,6 @@ use crate::core::{
 };
 
 const CACHE_FILENAME: &str = "gemini-api-spend-browser.json";
-const PREFERRED_CACHE_AGE_SECONDS: i64 = 10 * 60;
 const MAX_CACHE_AGE_SECONDS: i64 = 24 * 60 * 60;
 const CLOCK_SKEW_SECONDS: i64 = 60;
 
@@ -95,51 +91,6 @@ impl GeminiApiProvider {
                 ))
             }
         })
-    }
-
-    fn persist_cdp_snapshot(
-        payload: &SpendPayload,
-        observed_at: DateTime<Utc>,
-    ) -> Result<(), ProviderError> {
-        Self::validate_payload(payload)?;
-        let path = Self::cache_path()?;
-        let parent = path.parent().ok_or_else(|| {
-            ProviderError::Other("Gemini API cache path has no parent directory".into())
-        })?;
-        fs::create_dir_all(parent).map_err(|error| {
-            ProviderError::Other(format!(
-                "Failed to create Gemini API cache directory {}: {error}",
-                parent.display()
-            ))
-        })?;
-        let cache = BrowserCache {
-            version: 1,
-            provider: "gemini-api".into(),
-            observed_at: observed_at.timestamp(),
-            transport: Some("browser-cdp".into()),
-            payload: payload.clone(),
-        };
-        let bytes = serde_json::to_vec(&cache).map_err(|error| {
-            ProviderError::Other(format!("Failed to serialize Gemini API cache: {error}"))
-        })?;
-        let mut temp_name = path.as_os_str().to_os_string();
-        temp_name.push(format!(".tmp-{}", std::process::id()));
-        let temp = PathBuf::from(temp_name);
-        let result = (|| -> Result<(), std::io::Error> {
-            let mut file = fs::File::create(&temp)?;
-            file.write_all(&bytes)?;
-            file.sync_all()?;
-            fs::rename(&temp, &path)?;
-            Ok(())
-        })();
-        if let Err(error) = result {
-            let _ = fs::remove_file(&temp);
-            return Err(ProviderError::Other(format!(
-                "Failed to persist Gemini API CDP cache {}: {error}",
-                path.display()
-            )));
-        }
-        Ok(())
     }
 
     fn parse_reset(value: Option<&str>) -> Result<Option<DateTime<Utc>>, ProviderError> {
@@ -273,7 +224,10 @@ impl GeminiApiProvider {
         }
         let source_label = match cache.transport.as_deref() {
             None | Some("browser-bridge") => "browser-bridge",
-            Some("browser-cdp") => "browser-cdp",
+            // Older builds could persist a sanitized snapshot after a CDP read.
+            // Keep that cache readable during migration, but label it as cache
+            // so it cannot be mistaken for a live DevTools connection.
+            Some("browser-cdp") | Some("browser-cache") => "browser-cache",
             Some(other) => {
                 return Err(ProviderError::Parse(format!(
                     "Unknown Gemini API cache transport: {other}"
@@ -305,41 +259,15 @@ impl Provider for GeminiApiProvider {
             return Err(ProviderError::UnsupportedSource(ctx.source_mode));
         }
         let now = Utc::now();
-        let cached = Self::read_cache().and_then(|raw| Self::result_from_cache(&raw, now));
-        match cached {
-            Ok(result) => {
-                let age = now
-                    .signed_duration_since(result.usage.updated_at)
-                    .num_seconds();
-                if age <= PREFERRED_CACHE_AGE_SECONDS {
-                    return Ok(result);
-                }
-                match cdp::fetch_spend(ctx.web_timeout).await {
-                    Ok(payload) => {
-                        let observed_at = Utc::now();
-                        let _ = Self::persist_cdp_snapshot(&payload, observed_at);
-                        Self::result_from_payload(payload, observed_at, "browser-cdp")
-                    }
-                    Err(_) => Ok(result),
-                }
-            }
-            Err(cache_error) => match cdp::fetch_spend(ctx.web_timeout).await {
-                Ok(payload) => {
-                    let observed_at = Utc::now();
-                    let _ = Self::persist_cdp_snapshot(&payload, observed_at);
-                    Self::result_from_payload(payload, observed_at, "browser-cdp")
-                }
-                Err(_) => Err(cache_error),
-            },
-        }
+        Self::read_cache().and_then(|raw| Self::result_from_cache(&raw, now))
     }
 
     fn available_sources(&self) -> Vec<SourceMode> {
-        vec![SourceMode::Auto, SourceMode::Web]
+        vec![SourceMode::Auto]
     }
 
     fn supports_web(&self) -> bool {
-        true
+        false
     }
 }
 
@@ -428,5 +356,23 @@ mod tests {
         let result = GeminiApiProvider::result_from_cache(&value.to_string(), now).unwrap();
         assert!(result.usage.primary.is_informational);
         assert_eq!(result.cost.unwrap().used, 5.0);
+    }
+
+    #[test]
+    fn periodic_provider_refresh_exposes_cache_only_auto_source() {
+        let provider = GeminiApiProvider::new();
+        assert_eq!(provider.available_sources(), vec![SourceMode::Auto]);
+        assert!(!provider.supports_web());
+    }
+
+    #[test]
+    fn legacy_cdp_snapshot_is_read_only_cache_not_a_live_cdp_source() {
+        let now = DateTime::parse_from_rfc3339("2026-09-03T06:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut value: serde_json::Value = serde_json::from_str(&cache(now.timestamp())).unwrap();
+        value["transport"] = json!("browser-cdp");
+        let result = GeminiApiProvider::result_from_cache(&value.to_string(), now).unwrap();
+        assert_eq!(result.source_label, "browser-cache");
     }
 }
