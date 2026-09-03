@@ -94,6 +94,17 @@ Upstream's independent **WidgetKit** provider-widget configuration has no Window
 - Stable cache: `%LOCALAPPDATA%\\CodexBar\\gemini-apps-browser.json`. During the PoC-to-provider transition, the previous `gemini-web-bridge-poc.json` filename remains a read-only compatibility fallback.
 - Dashboard: `https://gemini.google.com/usage`. The provider is disabled by default until the Browser Bridge is configured.
 
+### Gemini API
+
+- Provider id: `gemini-api` (aliases `geminiapi`, `aistudio-spend`). This provider is separate from both Gemini CLI (`gemini`) and Gemini Apps (`geminiapps`).
+- Primary source: the sanitized Browser Bridge cache from the signed-in `https://aistudio.google.com/spend` page. Current English/Japanese layouts are supported, including split label/value rows and both yen glyphs (`¥` / `￥`). Net `Total cost` / `総費用` is used rather than pre-discount charges.
+- The bridge exports only net `Total cost`, the current amount shown in the Monthly spend cap panel, the configured cap when available, currency, period, a safe project label, and observation time; cookies, billing-account identifiers, emails, raw HTML, and raw network payloads remain browser-side.
+- This is a **spend/cap provider**, not the AI Studio Usage dashboard: it does not report request counts, token counts, or rate-limit quotas. AI Studio exposes those separately under Dashboard → Usage.
+- AI Studio renders the cap panel as `current amount / configured cap` (for example `￥1,054 / ￥2,000`). CodexBar keeps that numerator separate from net `Total cost`: the cap pair drives the primary quota percentage, while the cost snapshot continues to show net API cost. If no cap is configured, the provider remains cost-only and does not invent a quota percentage.
+- The bridge refreshes AI Studio Spend tabs on the same three-minute alarm as Gemini Apps. If no Spend tab exists, it creates one managed `active: false` tab and keeps it non-discardable; sign-in redirects are retained instead of creating repeated login tabs.
+- Stable cache: `%LOCALAPPDATA%\\CodexBar\\gemini-api-spend-browser.json`. A cache no older than 10 minutes is preferred. If it is missing/older, Windows can fall back to an already-approved local Chromium DevTools endpoint. The CDP fallback evaluates a sanitizer inside the signed-in AI Studio page and returns only spend, optional cap, currency, period, and a safe project label; it never reads cookies, localStorage, Authorization headers, or raw network bodies. A successful CDP read is persisted as the same secret-free last-known-good cache. If CDP is unavailable, a valid cache up to 24 hours old remains usable; older snapshots fail closed.
+- Dashboard: `https://aistudio.google.com/spend`. The provider is disabled by default until either Browser Bridge or a signed-in local CDP browser session is available.
+
 ### OrcaRouter
 
 - Provider id: `orcarouter` (aliases `orca`, `orca-router`). Base: `https://api.orcarouter.ai/v1`.

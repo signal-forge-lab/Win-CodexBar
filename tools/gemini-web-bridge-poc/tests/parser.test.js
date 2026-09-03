@@ -56,12 +56,16 @@ test('partial or malformed payloads fail closed', () => {
 test('parses sanitized AI Studio spend without inventing quota', () => {
   const result = spendParser.parseSpendText([
     'Current period spend: $12.34 USD',
-    'Spending limit: $50.00 USD',
+    'Monthly spend cap',
+    '$20.00 USD',
+    '/',
+    '$50.00 USD',
     'Billing period: Current month',
     'Project name: Demo Project'
   ].join('\n'));
   assert.deepEqual(result, {
     used: 12.34,
+    cap_used: 20,
     limit: 50,
     currency: 'USD',
     period: 'Current month',
@@ -71,11 +75,114 @@ test('parses sanitized AI Studio spend without inventing quota', () => {
   });
 });
 
+test('parses current AI Studio Monthly spend cap wording', () => {
+  const result = spendParser.parseSpendText([
+    'Current spend',
+    '$12.34 USD',
+    'Monthly spend cap',
+    '$20.00 USD',
+    '/',
+    '$50.00 USD'
+  ].join('\n'));
+  assert.equal(result.used, 12.34);
+  assert.equal(result.cap_used, 20);
+  assert.equal(result.limit, 50);
+  assert.equal(result.currency, 'USD');
+});
+
+test('parses current localized AI Studio net spend layout', () => {
+  const result = spendParser.parseSpendText([
+    'Project',
+    'Gemini Project',
+    '1 か月の費用の上限試験運用版',
+    '費用の上限を設定',
+    '合計費用',
+    'August 7 - September 3, 2026',
+    '料金',
+    '¥739.13',
+    '-',
+    'コスト削減',
+    '¥694.39',
+    '=',
+    '総費用',
+    '¥44.75'
+  ].join('\n'));
+  assert.deepEqual(result, {
+    used: 44.75,
+    cap_used: null,
+    limit: null,
+    currency: 'JPY',
+    period: 'August 7 - September 3, 2026',
+    resets_at: null,
+    scope: 'Project Gemini Project',
+    source: 'dom'
+  });
+});
+
+test('parses localized monthly spend cap when configured', () => {
+  const result = spendParser.parseSpendText([
+    '総費用',
+    '¥44.75',
+    '1 か月の費用の上限試験運用版',
+    '費用の上限を編集',
+    '￥1,054',
+    '/',
+    '￥2,000'
+  ].join('\n'));
+  assert.equal(result.used, 44.75);
+  assert.equal(result.cap_used, 1054);
+  assert.equal(result.limit, 2000);
+  assert.equal(result.currency, 'JPY');
+});
+
+test('waits for configured AI Studio cap amount instead of caching a partial page', () => {
+  assert.equal(spendParser.parseSpendText([
+    '\u7dcf\u8cbb\u7528',
+    '\u00a544.75',
+    '1 \u304b\u6708\u306e\u8cbb\u7528\u306e\u4e0a\u9650\u8a66\u9a13\u904b\u7528\u7248',
+    '\u8cbb\u7528\u306e\u4e0a\u9650\u3092\u8a2d\u5b9a\u307e\u305f\u306f\u7de8\u96c6'
+  ].join('\n')), null);
+});
+
+test('accepts an explicitly unset AI Studio spend cap as cost-only', () => {
+  const result = spendParser.parseSpendText([
+    '\u7dcf\u8cbb\u7528',
+    '\u00a544.75',
+    '1 \u304b\u6708\u306e\u8cbb\u7528\u306e\u4e0a\u9650\u8a66\u9a13\u904b\u7528\u7248',
+    '\u8cbb\u7528\u306e\u4e0a\u9650\u3092\u8a2d\u5b9a'
+  ].join('\n'));
+  assert.equal(result.used, 44.75);
+  assert.equal(result.cap_used, null);
+  assert.equal(result.limit, null);
+});
+
+test('parses current spend with an explicitly unconfigured cap', () => {
+  const result = spendParser.parseSpendText([
+    'Total cost',
+    '€44.75',
+    'Monthly spend cap',
+    '€413.47',
+    '/',
+    '–'
+  ].join('\n'));
+  assert.equal(result.used, 44.75);
+  assert.equal(result.cap_used, 413.47);
+  assert.equal(result.limit, null);
+  assert.equal(result.currency, 'EUR');
+});
+
+test('parses both yen glyph variants as JPY', () => {
+  assert.deepEqual(spendParser.parseMoney('¥44.75'), { amount: 44.75, currency: 'JPY' });
+  assert.deepEqual(spendParser.parseMoney('￥706'), { amount: 706, currency: 'JPY' });
+});
+
 test('AI Studio spend parser fails closed on partial or conflicting money', () => {
   assert.equal(spendParser.parseSpendText('Spending limit: $50 USD'), null);
   assert.equal(
-    spendParser.parseSpendText('Current period spend: $12 USD\nSpending limit: €50 EUR'),
+    spendParser.parseSpendText('Current period spend: $12 USD\nMonthly spend cap\n$20 USD\n/\n€50 EUR'),
     null
   );
   assert.equal(spendParser.parseMoney('$12 EUR'), null);
+  assert.equal(spendParser.safePeriod('person@example.com'), null);
+  assert.equal(spendParser.safePeriod('Billing account 123456'), null);
 });

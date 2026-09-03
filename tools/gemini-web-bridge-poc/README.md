@@ -26,6 +26,11 @@ AI Studio Spend page
   -> codexbar-gemini-web-bridge-poc.exe
   -> %LOCALAPPDATA%\CodexBar\gemini-api-spend-browser.json
   -> GeminiApiProvider (`gemini-api`)
+
+If the AI Studio Browser Bridge cache is missing or older than the preferred
+freshness window on Windows, `GeminiApiProvider` can use an already-approved
+local Chromium CDP endpoint. The page-side sanitizer returns only the same
+secret-free spend DTO, which is then persisted as last-known-good cache data.
 ```
 
 The cache may contain only:
@@ -39,10 +44,12 @@ The cache may contain only:
 
 Cookies, WIZ page tokens, raw HTML, and raw RPC payloads are rejected by the host's typed contract.
 
-The Gemini API spend cache contains only current spend, an optional displayed
-limit, currency, period/reset metadata when present, and a sanitized project
-label. It deliberately does not invent a quota percentage when AI Studio only
-exposes spend.
+The Gemini API spend cache contains only net `Total cost`, the current amount
+shown in the Monthly spend cap panel, the configured cap when available,
+currency, period/reset metadata when present, and a sanitized project label.
+The cap panel is interpreted as `current / cap`; its current amount is never
+mistaken for the configured cap. The provider deliberately does not invent a
+quota percentage when AI Studio exposes no configured cap.
 
 ## Build the native host
 
@@ -65,6 +72,9 @@ target\release\codexbar-gemini-web-bridge-poc.exe
 3. Choose **Load unpacked**.
 4. Select `tools\gemini-web-bridge-poc\extension`.
 5. Copy the resulting extension ID.
+
+The selected folder itself must contain `manifest.json`; do not select the
+repository root or the parent `tools\gemini-web-bridge-poc` directory.
 
 Repeat **Load unpacked** for every Chrome/Edge profile that may hold the signed-in Gemini account you want CodexBar to read. If a profile reports a different extension ID, register that ID too; the installer merges allowed origins instead of replacing the previously registered Edge/Chrome IDs.
 
@@ -117,14 +127,17 @@ cargo test -p codexbar --bin codexbar-gemini-web-bridge-poc
 ## Bridge limitations
 
 - Gemini's internal RPCs are undocumented.
-- Fresh readings require a signed-in Gemini browser session. Refreshes run
-  against background Gemini/AI Studio tabs. If no Gemini Apps tab exists, the
-  bridge creates one managed `gemini.google.com/usage` tab with `active: false`;
-  an AI Studio tab does not suppress that existing Gemini Apps behavior. AI
-  Studio spend capture does not create a tab automatically. If the managed
-  Gemini Apps tab is redirected to sign-in, its tab id is retained so alarms do
-  not create a login-tab loop. The bridge never activates a tab or moves
-  keyboard/mouse focus. It disables Memory Saver auto-discard for matching tabs
+- Fresh readings require signed-in Gemini / AI Studio browser sessions.
+  Refreshes run against background Gemini/AI Studio tabs. If no Gemini Apps tab
+  exists, the bridge creates one managed `gemini.google.com/usage` tab with
+  `active: false`. If no AI Studio Spend tab exists, it likewise creates one
+  managed `aistudio.google.com/spend` tab with `active: false`. Redirected sign-in
+  tabs keep their managed tab ids so alarms do not create login-tab loops. The
+  bridge never activates a tab or moves keyboard/mouse focus. It disables Memory
+  Saver auto-discard for matching tabs
   and may reload a background tab if Chromium already discarded or froze it.
-- The DOM parser is deliberately last-resort and does not infer reset timestamps from localized text.
+- The AI Studio DOM parser accepts the current English/Japanese Spend layouts,
+  including split label/value rows. It records net `Total cost` / `総費用`, not
+  pre-discount charges, and leaves the spend cap unknown when the UI only offers
+  the action to configure one. Reset timestamps are not inferred from localized text.
 - Multi-account selection is not a dedicated UX yet; the payload records the `/u/N` slot so account pinning can be added later.

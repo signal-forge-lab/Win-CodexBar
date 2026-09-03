@@ -4,10 +4,13 @@
 //! state, billing identifiers, emails, raw HTML and raw network payloads never
 //! cross the Native Messaging boundary.
 
+mod cdp;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 
 use crate::core::{
@@ -16,22 +19,27 @@ use crate::core::{
 };
 
 const CACHE_FILENAME: &str = "gemini-api-spend-browser.json";
+const PREFERRED_CACHE_AGE_SECONDS: i64 = 10 * 60;
 const MAX_CACHE_AGE_SECONDS: i64 = 24 * 60 * 60;
 const CLOCK_SKEW_SECONDS: i64 = 60;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct BrowserCache {
     version: u32,
     provider: String,
     observed_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    transport: Option<String>,
     payload: SpendPayload,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct SpendPayload {
+pub(super) struct SpendPayload {
     used: f64,
+    #[serde(default)]
+    cap_used: Option<f64>,
     limit: Option<f64>,
     currency: String,
     period: String,
@@ -50,7 +58,7 @@ impl GeminiApiProvider {
             metadata: ProviderMetadata {
                 id: ProviderId::GeminiApi,
                 display_name: "Gemini API",
-                session_label: "Spend",
+                session_label: "Monthly spend cap",
                 weekly_label: "Spend",
                 supports_opus: false,
                 supports_credits: true,
@@ -89,6 +97,51 @@ impl GeminiApiProvider {
         })
     }
 
+    fn persist_cdp_snapshot(
+        payload: &SpendPayload,
+        observed_at: DateTime<Utc>,
+    ) -> Result<(), ProviderError> {
+        Self::validate_payload(payload)?;
+        let path = Self::cache_path()?;
+        let parent = path.parent().ok_or_else(|| {
+            ProviderError::Other("Gemini API cache path has no parent directory".into())
+        })?;
+        fs::create_dir_all(parent).map_err(|error| {
+            ProviderError::Other(format!(
+                "Failed to create Gemini API cache directory {}: {error}",
+                parent.display()
+            ))
+        })?;
+        let cache = BrowserCache {
+            version: 1,
+            provider: "gemini-api".into(),
+            observed_at: observed_at.timestamp(),
+            transport: Some("browser-cdp".into()),
+            payload: payload.clone(),
+        };
+        let bytes = serde_json::to_vec(&cache).map_err(|error| {
+            ProviderError::Other(format!("Failed to serialize Gemini API cache: {error}"))
+        })?;
+        let mut temp_name = path.as_os_str().to_os_string();
+        temp_name.push(format!(".tmp-{}", std::process::id()));
+        let temp = PathBuf::from(temp_name);
+        let result = (|| -> Result<(), std::io::Error> {
+            let mut file = fs::File::create(&temp)?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            fs::rename(&temp, &path)?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            let _ = fs::remove_file(&temp);
+            return Err(ProviderError::Other(format!(
+                "Failed to persist Gemini API CDP cache {}: {error}",
+                path.display()
+            )));
+        }
+        Ok(())
+    }
+
     fn parse_reset(value: Option<&str>) -> Result<Option<DateTime<Utc>>, ProviderError> {
         value
             .map(|raw| {
@@ -101,6 +154,94 @@ impl GeminiApiProvider {
                     })
             })
             .transpose()
+    }
+
+    fn validate_payload(payload: &SpendPayload) -> Result<(), ProviderError> {
+        if !payload.used.is_finite() || payload.used < 0.0 {
+            return Err(ProviderError::Parse(
+                "Invalid Gemini API spend amount".into(),
+            ));
+        }
+        if payload
+            .cap_used
+            .is_some_and(|used| !used.is_finite() || used < 0.0)
+        {
+            return Err(ProviderError::Parse(
+                "Invalid Gemini API spend-cap current amount".into(),
+            ));
+        }
+        if payload
+            .limit
+            .is_some_and(|limit| !limit.is_finite() || limit <= 0.0)
+        {
+            return Err(ProviderError::Parse(
+                "Invalid Gemini API spend limit".into(),
+            ));
+        }
+        if payload.limit.is_some() && payload.cap_used.is_none() {
+            return Err(ProviderError::Parse(
+                "Gemini API spend cap is missing its current amount".into(),
+            ));
+        }
+        if !matches!(payload.currency.as_str(), "USD" | "EUR" | "GBP" | "JPY") {
+            return Err(ProviderError::Parse(
+                "Invalid Gemini API currency code".into(),
+            ));
+        }
+        if payload.period.is_empty()
+            || payload.period.len() > 64
+            || payload.period.contains('@')
+            || payload
+                .period
+                .to_ascii_lowercase()
+                .contains("billing account")
+            || payload.period.to_ascii_lowercase().contains("account id")
+        {
+            return Err(ProviderError::Parse(
+                "Invalid Gemini API spend period".into(),
+            ));
+        }
+        if payload.scope.as_ref().is_some_and(|scope| {
+            let lower = scope.to_ascii_lowercase();
+            scope.is_empty()
+                || scope.len() > 64
+                || scope.contains('@')
+                || lower.contains("billing")
+                || lower.contains("account")
+        }) {
+            return Err(ProviderError::Parse(
+                "Invalid Gemini API scope label".into(),
+            ));
+        }
+        if payload.source != "dom" {
+            return Err(ProviderError::Parse(
+                "Unknown Gemini API Browser Bridge parser source".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn result_from_payload(
+        payload: SpendPayload,
+        observed_at: DateTime<Utc>,
+        source_label: &'static str,
+    ) -> Result<ProviderFetchResult, ProviderError> {
+        Self::validate_payload(&payload)?;
+        let resets_at = Self::parse_reset(payload.resets_at.as_deref())?;
+        let mut cost = CostSnapshot::new(payload.used, payload.currency, payload.period);
+        cost.resets_at = resets_at;
+        cost.updated_at = observed_at;
+
+        let primary = match (payload.cap_used, payload.limit) {
+            (Some(cap_used), Some(limit)) => RateWindow::new((cap_used / limit) * 100.0),
+            _ => RateWindow::informational("Spend only"),
+        };
+        let mut usage = UsageSnapshot::new(primary);
+        usage.updated_at = observed_at;
+        if let Some(scope) = payload.scope {
+            usage = usage.with_login_method(scope);
+        }
+        Ok(ProviderFetchResult::new(usage, source_label).with_cost(cost))
     }
 
     fn result_from_cache(
@@ -130,65 +271,16 @@ impl GeminiApiProvider {
                 "Gemini API Browser Bridge snapshot is stale ({age}s old). Keep a signed-in AI Studio Spend tab open so the bridge can refresh it."
             )));
         }
-        if !cache.payload.used.is_finite() || cache.payload.used < 0.0 {
-            return Err(ProviderError::Parse(
-                "Invalid Gemini API spend amount".into(),
-            ));
-        }
-        if cache
-            .payload
-            .limit
-            .is_some_and(|limit| !limit.is_finite() || limit < 0.0)
-        {
-            return Err(ProviderError::Parse(
-                "Invalid Gemini API spend limit".into(),
-            ));
-        }
-        if !matches!(
-            cache.payload.currency.as_str(),
-            "USD" | "EUR" | "GBP" | "JPY"
-        ) {
-            return Err(ProviderError::Parse(
-                "Invalid Gemini API currency code".into(),
-            ));
-        }
-        if cache.payload.period.is_empty() || cache.payload.period.len() > 64 {
-            return Err(ProviderError::Parse(
-                "Invalid Gemini API spend period".into(),
-            ));
-        }
-        if cache
-            .payload
-            .scope
-            .as_ref()
-            .is_some_and(|scope| scope.is_empty() || scope.len() > 64 || scope.contains('@'))
-        {
-            return Err(ProviderError::Parse(
-                "Invalid Gemini API scope label".into(),
-            ));
-        }
-        if cache.payload.source != "dom" {
-            return Err(ProviderError::Parse(
-                "Unknown Gemini API Browser Bridge parser source".into(),
-            ));
-        }
-
-        let resets_at = Self::parse_reset(cache.payload.resets_at.as_deref())?;
-        let mut cost = CostSnapshot::new(
-            cache.payload.used,
-            cache.payload.currency,
-            cache.payload.period,
-        );
-        cost.limit = cache.payload.limit;
-        cost.resets_at = resets_at;
-        cost.updated_at = observed_at;
-
-        let mut usage = UsageSnapshot::new(RateWindow::informational("Spend only"));
-        usage.updated_at = observed_at;
-        if let Some(scope) = cache.payload.scope {
-            usage = usage.with_login_method(scope);
-        }
-        Ok(ProviderFetchResult::new(usage, "browser-bridge").with_cost(cost))
+        let source_label = match cache.transport.as_deref() {
+            None | Some("browser-bridge") => "browser-bridge",
+            Some("browser-cdp") => "browser-cdp",
+            Some(other) => {
+                return Err(ProviderError::Parse(format!(
+                    "Unknown Gemini API cache transport: {other}"
+                )));
+            }
+        };
+        Self::result_from_payload(cache.payload, observed_at, source_label)
     }
 }
 
@@ -212,7 +304,34 @@ impl Provider for GeminiApiProvider {
         if !matches!(ctx.source_mode, SourceMode::Auto | SourceMode::Web) {
             return Err(ProviderError::UnsupportedSource(ctx.source_mode));
         }
-        Self::result_from_cache(&Self::read_cache()?, Utc::now())
+        let now = Utc::now();
+        let cached = Self::read_cache().and_then(|raw| Self::result_from_cache(&raw, now));
+        match cached {
+            Ok(result) => {
+                let age = now
+                    .signed_duration_since(result.usage.updated_at)
+                    .num_seconds();
+                if age <= PREFERRED_CACHE_AGE_SECONDS {
+                    return Ok(result);
+                }
+                match cdp::fetch_spend(ctx.web_timeout).await {
+                    Ok(payload) => {
+                        let observed_at = Utc::now();
+                        let _ = Self::persist_cdp_snapshot(&payload, observed_at);
+                        Self::result_from_payload(payload, observed_at, "browser-cdp")
+                    }
+                    Err(_) => Ok(result),
+                }
+            }
+            Err(cache_error) => match cdp::fetch_spend(ctx.web_timeout).await {
+                Ok(payload) => {
+                    let observed_at = Utc::now();
+                    let _ = Self::persist_cdp_snapshot(&payload, observed_at);
+                    Self::result_from_payload(payload, observed_at, "browser-cdp")
+                }
+                Err(_) => Err(cache_error),
+            },
+        }
     }
 
     fn available_sources(&self) -> Vec<SourceMode> {
@@ -235,7 +354,8 @@ mod tests {
             "provider": "gemini-api",
             "observed_at": observed_at,
             "payload": {
-                "used": 12.34,
+                "used": 5.0,
+                "cap_used": 12.5,
                 "limit": 50.0,
                 "currency": "USD",
                 "period": "Current month",
@@ -248,17 +368,17 @@ mod tests {
     }
 
     #[test]
-    fn converts_spend_cache_to_cost_without_inventing_quota() {
+    fn separates_net_cost_from_spend_cap_utilization() {
         let now = DateTime::parse_from_rfc3339("2026-09-03T06:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
         let result =
             GeminiApiProvider::result_from_cache(&cache(now.timestamp() - 30), now).unwrap();
-        assert!(result.usage.primary.is_informational);
-        assert_eq!(result.usage.primary.used_percent, 0.0);
+        assert!(!result.usage.primary.is_informational);
+        assert_eq!(result.usage.primary.used_percent, 25.0);
         let cost = result.cost.unwrap();
-        assert_eq!(cost.used, 12.34);
-        assert_eq!(cost.limit, Some(50.0));
+        assert_eq!(cost.used, 5.0);
+        assert_eq!(cost.limit, None);
         assert_eq!(cost.currency_code, "USD");
         assert_eq!(cost.period, "Current month");
     }
@@ -287,5 +407,26 @@ mod tests {
         let mut value: serde_json::Value = serde_json::from_str(&cache(now.timestamp())).unwrap();
         value["payload"]["scope"] = json!("person@example.com");
         assert!(GeminiApiProvider::result_from_cache(&value.to_string(), now).is_err());
+
+        let mut value: serde_json::Value = serde_json::from_str(&cache(now.timestamp())).unwrap();
+        value["payload"]["period"] = json!("person@example.com");
+        assert!(GeminiApiProvider::result_from_cache(&value.to_string(), now).is_err());
+
+        let mut value: serde_json::Value = serde_json::from_str(&cache(now.timestamp())).unwrap();
+        value["payload"].as_object_mut().unwrap().remove("cap_used");
+        assert!(GeminiApiProvider::result_from_cache(&value.to_string(), now).is_err());
+    }
+
+    #[test]
+    fn no_configured_cap_remains_cost_only() {
+        let now = DateTime::parse_from_rfc3339("2026-09-03T06:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut value: serde_json::Value = serde_json::from_str(&cache(now.timestamp())).unwrap();
+        value["payload"]["cap_used"] = serde_json::Value::Null;
+        value["payload"]["limit"] = serde_json::Value::Null;
+        let result = GeminiApiProvider::result_from_cache(&value.to_string(), now).unwrap();
+        assert!(result.usage.primary.is_informational);
+        assert_eq!(result.cost.unwrap().used, 5.0);
     }
 }

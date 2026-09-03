@@ -6,6 +6,7 @@ const SPEND_REFRESH_MESSAGE = 'codexbar:gemini-api-spend:refresh';
 const CACHE_KEY = 'codexbarGeminiAppsPocLastPush';
 const SPEND_CACHE_KEY = 'codexbarGeminiApiSpendLastPush';
 const MANAGED_TAB_KEY = 'codexbarGeminiAppsManagedTabId';
+const MANAGED_SPEND_TAB_KEY = 'codexbarGeminiApiSpendManagedTabId';
 const REFRESH_ALARM = 'codexbar-gemini-apps-poc-refresh';
 const REFRESH_INTERVAL_MINUTES = 3;
 
@@ -38,6 +39,26 @@ function validMessage(message, sender) {
     && validWindow(payload.weekly, 'Weekly limit');
 }
 
+function validSpendPayload(payload) {
+  return payload
+    && Number.isFinite(payload.used)
+    && payload.used >= 0
+    && (payload.cap_used == null || (Number.isFinite(payload.cap_used) && payload.cap_used >= 0))
+    && (payload.limit == null || (Number.isFinite(payload.limit) && payload.limit >= 0))
+    && (payload.limit == null || payload.cap_used != null)
+    && /^(USD|EUR|GBP|JPY)$/.test(payload.currency || '')
+    && typeof payload.period === 'string'
+    && payload.period.length > 0
+    && payload.period.length <= 64
+    && payload.resets_at == null
+    && (payload.scope == null
+      || (typeof payload.scope === 'string' && payload.scope.length > 0
+        && payload.scope.length <= 64 && !payload.scope.includes('@')))
+    && payload.source === 'dom'
+    && Object.keys(payload).every((key) =>
+      ['used', 'cap_used', 'limit', 'currency', 'period', 'resets_at', 'scope', 'source'].includes(key));
+}
+
 function validSpendMessage(message, sender) {
   const payload = message?.payload;
   let url;
@@ -54,21 +75,7 @@ function validSpendMessage(message, sender) {
     && url.pathname === '/spend'
     && Number.isInteger(message.observed_at)
     && message.observed_at > 0
-    && payload
-    && Number.isFinite(payload.used)
-    && payload.used >= 0
-    && (payload.limit == null || (Number.isFinite(payload.limit) && payload.limit >= 0))
-    && /^(USD|EUR|GBP|JPY)$/.test(payload.currency || '')
-    && typeof payload.period === 'string'
-    && payload.period.length > 0
-    && payload.period.length <= 64
-    && payload.resets_at == null
-    && (payload.scope == null
-      || (typeof payload.scope === 'string' && payload.scope.length > 0
-        && payload.scope.length <= 64 && !payload.scope.includes('@')))
-    && payload.source === 'dom'
-    && Object.keys(payload).every((key) =>
-      ['used', 'limit', 'currency', 'period', 'resets_at', 'scope', 'source'].includes(key));
+    && validSpendPayload(payload);
 }
 
 function connectNative() {
@@ -98,6 +105,43 @@ async function forward(message) {
   }
 }
 
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function captureAiStudioSpend(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['aistudio-parser.js']
+    });
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const result = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => globalThis.CodexBarAiStudioSpendParser
+          ?.parseSpendText(document.body?.innerText || '') ?? null
+      });
+      const payload = result?.[0]?.result ?? null;
+      if (validSpendPayload(payload)) {
+        const message = {
+          type: SPEND_MESSAGE,
+          version: 1,
+          provider: 'gemini-api',
+          observed_at: Math.floor(Date.now() / 1000),
+          payload
+        };
+        await chrome.storage.local.set({ [SPEND_CACHE_KEY]: message });
+        await forward(message);
+        return true;
+      }
+      await sleep(500);
+    }
+  } catch (_) {
+    // Browser-bridge capture is best effort. The native provider can fall back to local CDP.
+  }
+  return false;
+}
+
 function refreshGeminiTab(tab) {
   if (tab?.id == null) return;
   chrome.tabs.update(tab.id, { autoDiscardable: false }, () => {
@@ -109,6 +153,9 @@ function refreshGeminiTab(tab) {
     const type = tab.url?.startsWith('https://aistudio.google.com/spend')
       ? SPEND_REFRESH_MESSAGE
       : REFRESH_MESSAGE;
+    if (type === SPEND_REFRESH_MESSAGE) {
+      void captureAiStudioSpend(tab.id);
+    }
     chrome.tabs.sendMessage(tab.id, { type }, () => {
       void chrome.runtime.lastError;
     });
@@ -120,21 +167,28 @@ function refreshOpenGeminiTabs() {
     if (chrome.runtime.lastError) return;
     const matching = tabs || [];
     for (const tab of matching) refreshGeminiTab(tab);
-    if (matching.some((tab) => tab.url?.startsWith('https://gemini.google.com/'))) return;
+    if (!matching.some((tab) => tab.url?.startsWith('https://gemini.google.com/'))) {
+      ensureManagedTab(MANAGED_TAB_KEY, createManagedUsageTab);
+    }
+    if (!matching.some((tab) => tab.url?.startsWith('https://aistudio.google.com/spend'))) {
+      ensureManagedTab(MANAGED_SPEND_TAB_KEY, createManagedSpendTab);
+    }
+  });
+}
 
-    chrome.storage.local.get(MANAGED_TAB_KEY, (stored) => {
-      if (chrome.runtime.lastError) return;
-      const managedTabId = stored[MANAGED_TAB_KEY];
-      if (Number.isInteger(managedTabId)) {
-        chrome.tabs.get(managedTabId, () => {
-          if (!chrome.runtime.lastError) return;
-          chrome.storage.local.remove(MANAGED_TAB_KEY, () => void chrome.runtime.lastError);
-          createManagedUsageTab();
-        });
-        return;
-      }
-      createManagedUsageTab();
-    });
+function ensureManagedTab(storageKey, createTab) {
+  chrome.storage.local.get(storageKey, (stored) => {
+    if (chrome.runtime.lastError) return;
+    const managedTabId = stored[storageKey];
+    if (Number.isInteger(managedTabId)) {
+      chrome.tabs.get(managedTabId, () => {
+        if (!chrome.runtime.lastError) return;
+        chrome.storage.local.remove(storageKey, () => void chrome.runtime.lastError);
+        createTab();
+      });
+      return;
+    }
+    createTab();
   });
 }
 
@@ -142,6 +196,14 @@ function createManagedUsageTab() {
   chrome.tabs.create({ url: 'https://gemini.google.com/usage', active: false }, (tab) => {
     if (chrome.runtime.lastError || tab?.id == null) return;
     chrome.storage.local.set({ [MANAGED_TAB_KEY]: tab.id }, () => void chrome.runtime.lastError);
+    chrome.tabs.update(tab.id, { autoDiscardable: false }, () => void chrome.runtime.lastError);
+  });
+}
+
+function createManagedSpendTab() {
+  chrome.tabs.create({ url: 'https://aistudio.google.com/spend', active: false }, (tab) => {
+    if (chrome.runtime.lastError || tab?.id == null) return;
+    chrome.storage.local.set({ [MANAGED_SPEND_TAB_KEY]: tab.id }, () => void chrome.runtime.lastError);
     chrome.tabs.update(tab.id, { autoDiscardable: false }, () => void chrome.runtime.lastError);
   });
 }
@@ -194,10 +256,23 @@ chrome.idle.onStateChanged.addListener((state) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  chrome.storage.local.get(MANAGED_TAB_KEY, (stored) => {
-    if (chrome.runtime.lastError || stored[MANAGED_TAB_KEY] !== tabId) return;
-    chrome.storage.local.remove(MANAGED_TAB_KEY, () => void chrome.runtime.lastError);
+  chrome.storage.local.get([MANAGED_TAB_KEY, MANAGED_SPEND_TAB_KEY], (stored) => {
+    if (chrome.runtime.lastError) return;
+    for (const key of [MANAGED_TAB_KEY, MANAGED_SPEND_TAB_KEY]) {
+      if (stored[key] === tabId) {
+        chrome.storage.local.remove(key, () => void chrome.runtime.lastError);
+      }
+    }
   });
+});
+
+chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
+  if (changeInfo.status !== 'complete') return;
+  const url = tab?.url || '';
+  if (url.startsWith('https://gemini.google.com/')
+      || url.startsWith('https://aistudio.google.com/spend')) {
+    refreshGeminiTab(tab);
+  }
 });
 
 void restoreConnection();

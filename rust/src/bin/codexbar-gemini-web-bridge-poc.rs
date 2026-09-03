@@ -49,6 +49,7 @@ struct GeminiApiSpendPush {
 #[serde(deny_unknown_fields)]
 struct GeminiApiSpendPayload {
     used: f64,
+    cap_used: Option<f64>,
     limit: Option<f64>,
     currency: String,
     period: String,
@@ -245,25 +246,45 @@ fn validate_gemini_api_push(push: &GeminiApiSpendPush) -> Result<(), String> {
         return Err("used must be a finite non-negative amount".to_string());
     }
     if payload
-        .limit
-        .is_some_and(|limit| !limit.is_finite() || limit < 0.0)
+        .cap_used
+        .is_some_and(|used| !used.is_finite() || used < 0.0)
     {
-        return Err("limit must be absent or a finite non-negative amount".to_string());
+        return Err("cap_used must be absent or a finite non-negative amount".to_string());
+    }
+    if payload
+        .limit
+        .is_some_and(|limit| !limit.is_finite() || limit <= 0.0)
+    {
+        return Err("limit must be absent or a finite positive amount".to_string());
+    }
+    if payload.limit.is_some() && payload.cap_used.is_none() {
+        return Err("a configured limit requires cap_used".to_string());
     }
     if !matches!(payload.currency.as_str(), "USD" | "EUR" | "GBP" | "JPY") {
         return Err("unsupported Gemini API currency".to_string());
     }
-    if payload.period.is_empty() || payload.period.len() > 64 {
+    if payload.period.is_empty()
+        || payload.period.len() > 64
+        || payload.period.contains('@')
+        || payload
+            .period
+            .to_ascii_lowercase()
+            .contains("billing account")
+        || payload.period.to_ascii_lowercase().contains("account id")
+    {
         return Err("period must be 1..=64 bytes".to_string());
     }
     if !validate_reset(&payload.resets_at) {
         return Err("invalid Gemini API reset timestamp".to_string());
     }
-    if payload
-        .scope
-        .as_ref()
-        .is_some_and(|scope| scope.is_empty() || scope.len() > 64 || scope.contains('@'))
-    {
+    if payload.scope.as_ref().is_some_and(|scope| {
+        let lower = scope.to_ascii_lowercase();
+        scope.is_empty()
+            || scope.len() > 64
+            || scope.contains('@')
+            || lower.contains("billing")
+            || lower.contains("account")
+    }) {
         return Err("scope is not a safe display label".to_string());
     }
     if payload.source != "dom" {
@@ -381,7 +402,8 @@ mod tests {
             "provider": "gemini-api",
             "observed_at": 1_788_400_000,
             "payload": {
-                "used": 12.34,
+                "used": 5.0,
+                "cap_used": 12.5,
                 "limit": 50.0,
                 "currency": "USD",
                 "period": "Current month",
@@ -410,7 +432,8 @@ mod tests {
         let BrowserPush::GeminiApi(push) = push else {
             panic!("wrong provider")
         };
-        assert_eq!(push.payload.used, 12.34);
+        assert_eq!(push.payload.used, 5.0);
+        assert_eq!(push.payload.cap_used, Some(12.5));
         assert_eq!(push.payload.limit, Some(50.0));
         assert_eq!(push.payload.currency, "USD");
     }
