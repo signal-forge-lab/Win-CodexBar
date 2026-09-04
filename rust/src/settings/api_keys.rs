@@ -594,7 +594,7 @@ pub fn get_api_key_providers() -> Vec<ProviderConfigInfo> {
             requires_api_key: true,
             api_key_env_var: Some("AIHUBMIX_TOKEN / AIHUBMIX_MANAGE_KEY / AIHUBMIX_ACCESS_TOKEN"),
             api_key_help: Some(
-                "AIHubMix Manage Key / system access token (current official format fd...). This is not a normal model API key. Auto uses the Manage Key only and never opens CDP; choose Web explicitly for the signed-in browser/CDP path.",
+                "AIHubMix Manage Key / system access token (current official format fd...). This is not a normal model API key. Auto uses the Manage Key for current balance plus the secret-free Browser Bridge recharge cache for FloatBar percentage and never opens CDP; choose Web explicitly for the signed-in browser/CDP balance path.",
             ),
             config_file_path: None,
             dashboard_url: Some("https://console.aihubmix.com/topup"),

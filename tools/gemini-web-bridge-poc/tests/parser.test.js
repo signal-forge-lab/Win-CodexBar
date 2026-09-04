@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const parser = require('../extension/gemini-parser.js');
 const spendParser = require('../extension/aistudio-parser.js');
+const aiHubMixParser = require('../extension/aihubmix-parser.js');
 
 test('parses AI Quota Deck style jSf9Qc current and weekly windows', () => {
   const inner = [
@@ -185,4 +186,44 @@ test('AI Studio spend parser fails closed on partial or conflicting money', () =
   assert.equal(spendParser.parseMoney('$12 EUR'), null);
   assert.equal(spendParser.safePeriod('person@example.com'), null);
   assert.equal(spendParser.safePeriod('Billing account 123456'), null);
+});
+
+test('AIHubMix parser picks the newest active positive funding balance', () => {
+  const result = aiHubMixParser.latestFundingFromResponse({
+    success: true,
+    data: [
+      { grant_type: 4, status: 1, quota: -500000, balance_after: 3500000, created_time: 40 },
+      { grant_type: 2, status: 2, quota: 2000000, balance_after: 5500000, created_time: 30 },
+      { grant_type: 1, status: 1, quota: 2000000, balance_after: 5000000, created_time: 20 },
+      { grant_type: 3, status: 1, quota: 500000, balance_after: 3000000, created_time: 10 }
+    ]
+  });
+  assert.deepEqual(result, {
+    funded_balance_usd: 10,
+    funding_created_at: 20,
+    source: 'network'
+  });
+});
+
+test('AIHubMix DOM fallback parses positive quota and balance-after cells', () => {
+  const result = aiHubMixParser.latestFundingFromRows([
+    ['Alipay', 'Available', '+$2.00', '$10.00', '2026-09-04'],
+    ['Deduct', 'Available', '-$1.00', '$9.00', '2026-09-04']
+  ]);
+  assert.deepEqual(result, {
+    funded_balance_usd: 10,
+    funding_created_at: null,
+    source: 'dom'
+  });
+  assert.equal(aiHubMixParser.parseDisplayAmount('+$2.00'), 2);
+});
+
+test('AIHubMix parser fails closed on malformed or non-funding history', () => {
+  assert.equal(aiHubMixParser.latestFundingFromResponse({ success: false, data: [] }), null);
+  assert.equal(aiHubMixParser.latestFundingFromResponse({ success: true, data: 'not-an-array' }), null);
+  assert.equal(aiHubMixParser.latestFundingFromResponse({
+    success: true,
+    data: [{ grant_type: 4, status: 1, quota: -500000, balance_after: 1000000, created_time: 1 }]
+  }), null);
+  assert.equal(aiHubMixParser.latestFundingFromRows([['Deduct', 'Available', '-$1', '$9']]), null);
 });

@@ -2,10 +2,10 @@
 //!
 //! AIHubMix exposes the current account balance through the documented
 //! `GET /api/user/self` platform endpoint. The wire quota unit is 1 / 500000
-//! USD. In API mode CodexBar also reads the current console transaction feed
-//! and uses the newest active positive grant's `balance_after` as the funded
-//! balance anchor. This lets the FloatBar show depletion since the latest
-//! recharge (for example, $7 remaining from a $10 funded balance = 30% used).
+//! USD. The signed-in console's recharge page is Clerk-session protected, so
+//! the Browser Bridge captures only the newest funded `balance_after` value
+//! and persists that secret-free scalar locally. Auto mode combines the live
+//! Manage-Key balance with that cache to drive FloatBar depletion.
 //!
 //! Auto mode uses an explicitly configured AIHubMix Manage Key and never
 //! initiates CDP. Explicit Web mode can use a signed-in local Chromium CDP
@@ -15,7 +15,9 @@
 mod cdp;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
+use std::{fs, path::PathBuf};
 
 use crate::core::{
     CostSnapshot, FetchContext, Provider, ProviderError, ProviderFetchResult, ProviderId,
@@ -24,8 +26,10 @@ use crate::core::{
 
 const SELF_URL: &str = "https://aihubmix.com/api/user/self";
 const SELF_URL_FALLBACK: &str = "https://api.aihubmix.com/api/user/self";
-const QUOTA_RECORD_URL: &str = "https://aihubmix.com/call/usr/quota_rec?p=0";
 const DASHBOARD_URL: &str = "https://console.aihubmix.com/topup";
+const RECHARGE_CACHE_FILENAME: &str = "aihubmix-recharge-browser.json";
+const RECHARGE_CACHE_MAX_AGE_SECONDS: i64 = 30 * 24 * 60 * 60;
+const CLOCK_SKEW_SECONDS: i64 = 60;
 const CREDENTIAL_TARGET: &str = "codexbar-aihubmix";
 const ENV_KEYS: &[&str] = &[
     "AIHUBMIX_TOKEN",
@@ -88,10 +92,6 @@ struct SelfResponse {
 #[derive(Debug, Deserialize)]
 struct SelfData {
     #[serde(default)]
-    id: Option<serde_json::Value>,
-    #[serde(default)]
-    access_token: Option<String>,
-    #[serde(default)]
     quota: Option<serde_json::Value>,
     #[serde(default)]
     used_quota: Option<serde_json::Value>,
@@ -105,35 +105,28 @@ struct CreditValues {
     used_usd: Option<f64>,
 }
 
+#[derive(Debug)]
 struct AccountValues {
     credits: CreditValues,
     group: Option<String>,
-    user_id: Option<i64>,
-    // Transient credential returned by /api/user/self. Never persisted,
-    // rendered, or included in a Debug implementation.
-    access_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct QuotaRecordResponse {
-    #[serde(default)]
-    success: Option<bool>,
-    #[serde(default)]
-    data: Vec<QuotaRecord>,
+#[serde(deny_unknown_fields)]
+struct RechargeBrowserCache {
+    version: u32,
+    provider: String,
+    observed_at: i64,
+    payload: RechargeBrowserPayload,
 }
 
 #[derive(Debug, Deserialize)]
-struct QuotaRecord {
+#[serde(deny_unknown_fields)]
+struct RechargeBrowserPayload {
+    funded_balance_usd: f64,
     #[serde(default)]
-    grant_type: Option<serde_json::Value>,
-    #[serde(default)]
-    status: Option<serde_json::Value>,
-    #[serde(default)]
-    quota: Option<serde_json::Value>,
-    #[serde(default)]
-    balance_after: Option<serde_json::Value>,
-    #[serde(default)]
-    created_time: Option<serde_json::Value>,
+    funding_created_at: Option<i64>,
+    source: String,
 }
 
 fn parse_number(value: &serde_json::Value) -> Option<f64> {
@@ -143,14 +136,6 @@ fn parse_number(value: &serde_json::Value) -> Option<f64> {
         _ => None,
     }
     .filter(|value| value.is_finite())
-}
-
-fn parse_i64(value: &serde_json::Value) -> Option<i64> {
-    match value {
-        serde_json::Value::Number(number) => number.as_i64(),
-        serde_json::Value::String(text) => text.trim().parse::<i64>().ok(),
-        _ => None,
-    }
 }
 
 fn quota_to_usd(quota: f64, label: &str) -> Result<f64, ProviderError> {
@@ -186,64 +171,86 @@ impl SelfResponse {
             .group
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
-        let user_id = data.id.as_ref().and_then(parse_i64).filter(|id| *id > 0);
-        let access_token = data
-            .access_token
-            .map(|token| token.trim().to_string())
-            .filter(|token| !token.is_empty());
-        Ok(AccountValues {
-            credits,
-            group,
-            user_id,
-            access_token,
-        })
+        Ok(AccountValues { credits, group })
     }
 }
 
-impl QuotaRecordResponse {
-    fn parse(text: &str) -> Result<Self, ProviderError> {
-        let parsed: Self = serde_json::from_str(text).map_err(|error| {
-            ProviderError::Parse(format!("Invalid AIHubMix quota-record response: {error}"))
-        })?;
-        if parsed.success == Some(false) {
-            return Err(ProviderError::AuthRequired);
+fn recharge_cache_path() -> Result<PathBuf, ProviderError> {
+    dirs::data_local_dir()
+        .map(|root| root.join("CodexBar").join(RECHARGE_CACHE_FILENAME))
+        .ok_or_else(|| {
+            ProviderError::NotInstalled(
+                "Could not locate LOCALAPPDATA for AIHubMix recharge cache.".into(),
+            )
+        })
+}
+
+fn funded_balance_from_cache_raw(
+    raw: &str,
+    current_balance_usd: f64,
+    now: DateTime<Utc>,
+) -> Result<Option<f64>, ProviderError> {
+    let cache: RechargeBrowserCache = serde_json::from_str(raw).map_err(|error| {
+        ProviderError::Parse(format!("Invalid AIHubMix Browser Bridge cache: {error}"))
+    })?;
+    if cache.version != 1 || cache.provider != "aihubmix" {
+        return Err(ProviderError::Parse(
+            "Unsupported AIHubMix Browser Bridge cache version/provider".into(),
+        ));
+    }
+    let observed_at = DateTime::<Utc>::from_timestamp(cache.observed_at, 0).ok_or_else(|| {
+        ProviderError::Parse("Invalid AIHubMix Browser Bridge observation timestamp".into())
+    })?;
+    let age = (now - observed_at).num_seconds();
+    if age < -CLOCK_SKEW_SECONDS {
+        return Err(ProviderError::Other(
+            "AIHubMix Browser Bridge snapshot is from the future; check the system clock.".into(),
+        ));
+    }
+    if age > RECHARGE_CACHE_MAX_AGE_SECONDS {
+        return Ok(None);
+    }
+    let payload = cache.payload;
+    if !payload.funded_balance_usd.is_finite() || payload.funded_balance_usd <= 0.0 {
+        return Err(ProviderError::Parse(
+            "Invalid AIHubMix funded balance in Browser Bridge cache".into(),
+        ));
+    }
+    if !matches!(payload.source.as_str(), "network" | "dom") {
+        return Err(ProviderError::Parse(
+            "Unknown AIHubMix Browser Bridge parser source".into(),
+        ));
+    }
+    if payload
+        .funding_created_at
+        .is_some_and(|timestamp| timestamp <= 0 || timestamp > now.timestamp() + CLOCK_SKEW_SECONDS)
+    {
+        return Err(ProviderError::Parse(
+            "Invalid AIHubMix funding timestamp in Browser Bridge cache".into(),
+        ));
+    }
+    if payload.funded_balance_usd + 1e-9 < current_balance_usd {
+        return Ok(None);
+    }
+    Ok(Some(payload.funded_balance_usd))
+}
+
+fn read_funded_balance_cache(
+    current_balance_usd: f64,
+    now: DateTime<Utc>,
+) -> Result<Option<f64>, ProviderError> {
+    let path = recharge_cache_path()?;
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(ProviderError::Other(format!(
+                "Failed to read AIHubMix Browser Bridge cache {}: {error}",
+                path.display()
+            )));
         }
-        Ok(parsed)
-    }
-
-    fn latest_funded_balance_usd(&self, current_balance_usd: f64) -> Option<f64> {
-        let current_quota = current_balance_usd * QUOTA_PER_USD;
-        self.data
-            .iter()
-            .filter_map(|record| {
-                let grant_type = record.grant_type.as_ref().and_then(parse_i64)?;
-                let status = record.status.as_ref().and_then(parse_i64)?;
-                let quota = record.quota.as_ref().and_then(parse_number)?;
-                let balance_after = record.balance_after.as_ref().and_then(parse_number)?;
-                let created_time = record
-                    .created_time
-                    .as_ref()
-                    .and_then(parse_i64)
-                    .unwrap_or_default();
-
-                // Console semantics: grant_type=4 is a deduction, status=1 is
-                // the active/available state, and positive quota rows are
-                // funding events (top-up, exchange, admin grant, auto top-up).
-                if grant_type == 4
-                    || status != 1
-                    || !quota.is_finite()
-                    || quota <= 0.0
-                    || !balance_after.is_finite()
-                    || balance_after <= 0.0
-                    || balance_after + 0.5 < current_quota
-                {
-                    return None;
-                }
-                Some((created_time, balance_after))
-            })
-            .max_by_key(|(created_time, _)| *created_time)
-            .and_then(|(_, balance_after)| quota_to_usd(balance_after, "balance_after").ok())
-    }
+    };
+    funded_balance_from_cache_raw(&raw, current_balance_usd, now)
 }
 
 fn status_error(status: reqwest::StatusCode) -> ProviderError {
@@ -308,85 +315,6 @@ async fn fetch_self(
             );
             fetch_self_url(client, SELF_URL_FALLBACK, manage_key).await
         }
-    }
-}
-
-async fn fetch_quota_records_with_token(
-    client: &reqwest::Client,
-    url: &str,
-    token: &str,
-    user_id: i64,
-    bearer: bool,
-) -> Result<QuotaRecordResponse, ProviderError> {
-    let request = client
-        .get(url)
-        .header("Accept", "application/json")
-        .header("Cache-Control", "no-store")
-        .header("New-Api-User", user_id.to_string());
-    let request = if bearer {
-        request.bearer_auth(token)
-    } else {
-        request.header("Authorization", token)
-    };
-    let response = request.send().await?;
-    if !response.status().is_success() {
-        return Err(status_error(response.status()));
-    }
-    let text = response.text().await.map_err(|error| {
-        ProviderError::Other(format!("Failed to read AIHubMix quota records: {error}"))
-    })?;
-    QuotaRecordResponse::parse(&text)
-}
-
-async fn fetch_funded_balance(
-    client: &reqwest::Client,
-    manage_key: &str,
-    access_token: Option<&str>,
-    user_id: Option<i64>,
-    current_balance_usd: f64,
-) -> Result<Option<f64>, ProviderError> {
-    let Some(user_id) = user_id else {
-        return Ok(None);
-    };
-
-    // First try the official Manage Key form: raw Authorization value.
-    match fetch_quota_records_with_token(client, QUOTA_RECORD_URL, manage_key, user_id, false).await
-    {
-        Ok(records) => return Ok(records.latest_funded_balance_usd(current_balance_usd)),
-        Err(ProviderError::AuthRequired) => {}
-        Err(error) => return Err(error),
-    }
-
-    // Retain Bearer compatibility for older system/access-token setups.
-    match fetch_quota_records_with_token(client, QUOTA_RECORD_URL, manage_key, user_id, true).await
-    {
-        Ok(records) => return Ok(records.latest_funded_balance_usd(current_balance_usd)),
-        Err(ProviderError::AuthRequired) => {}
-        Err(error) => return Err(error),
-    }
-
-    // /api/user/self already returns access_token. Reuse that value in-memory
-    // for the user-scoped Transactions route. Do not call /api/user/token:
-    // compatible backends may implement that GET as token regeneration.
-    let Some(access_token) = access_token else {
-        return Ok(None);
-    };
-    match fetch_quota_records_with_token(client, QUOTA_RECORD_URL, access_token, user_id, false)
-        .await
-    {
-        Ok(records) => Ok(records.latest_funded_balance_usd(current_balance_usd)),
-        Err(ProviderError::AuthRequired) => {
-            let records = fetch_quota_records_with_token(
-                client,
-                QUOTA_RECORD_URL,
-                access_token,
-                user_id,
-                true,
-            )
-            .await?;
-            Ok(records.latest_funded_balance_usd(current_balance_usd))
-        }
-        Err(error) => Err(error),
     }
 }
 
@@ -457,33 +385,29 @@ impl Provider for AiHubMixProvider {
                     .build()
                     .map_err(|error| ProviderError::Other(error.to_string()))?;
                 let account = fetch_self(&client, &manage_key).await?;
-                tracing::debug!(
-                    user_id_present = account.user_id.is_some(),
-                    "AIHubMix account metadata resolved for recharge-history enrichment"
-                );
-                let funded_balance_usd = match fetch_funded_balance(
-                    &client,
-                    &manage_key,
-                    account.access_token.as_deref(),
-                    account.user_id,
+                let funded_balance_usd = match read_funded_balance_cache(
                     account.credits.balance_usd,
-                )
-                .await
-                {
+                    Utc::now(),
+                ) {
                     Ok(value) => value,
                     Err(error) => {
                         tracing::debug!(
                             %error,
-                            "AIHubMix recharge history unavailable; keeping balance-only result"
+                            "AIHubMix Browser Bridge recharge cache unavailable; keeping balance-only result"
                         );
                         None
                     }
+                };
+                let source = if funded_balance_usd.is_some() {
+                    "api+browser-bridge"
+                } else {
+                    "api"
                 };
                 Ok(result_from_values(
                     account.credits,
                     account.group,
                     funded_balance_usd,
-                    "api",
+                    source,
                 ))
             }
             SourceMode::Web => fetch_browser(ctx.web_timeout).await,
@@ -524,7 +448,6 @@ mod tests {
         assert!((account.credits.balance_usd - 58.142514).abs() < 1e-9);
         assert!((account.credits.used_usd.unwrap() - 572.806968).abs() < 1e-9);
         assert_eq!(account.group.as_deref(), Some("default"));
-        assert_eq!(account.access_token.as_deref(), Some("not-retained"));
     }
 
     #[test]
@@ -598,29 +521,42 @@ mod tests {
     }
 
     #[test]
-    fn quota_records_pick_latest_active_positive_grant_balance_after() {
-        let records = QuotaRecordResponse::parse(
-            r#"{
-                "success": true,
-                "data": [
-                    {"grant_type":4,"status":1,"quota":-500000,"balance_after":3500000,"created_time":30},
-                    {"grant_type":2,"status":2,"quota":2000000,"balance_after":5500000,"created_time":25},
-                    {"grant_type":1,"status":1,"quota":2000000,"balance_after":5000000,"created_time":20},
-                    {"grant_type":3,"status":1,"quota":500000,"balance_after":3000000,"created_time":10}
-                ]
-            }"#,
-        )
-        .unwrap();
-        assert_eq!(records.latest_funded_balance_usd(7.0), Some(10.0));
+    fn browser_recharge_cache_supplies_funded_balance() {
+        let now = DateTime::parse_from_rfc3339("2026-09-04T03:40:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let raw = r#"{
+            "version":1,
+            "provider":"aihubmix",
+            "observed_at":1788492600,
+            "payload":{
+                "funded_balance_usd":10.0,
+                "funding_created_at":1788400000,
+                "source":"network"
+            }
+        }"#;
+        assert_eq!(
+            funded_balance_from_cache_raw(raw, 7.0, now).unwrap(),
+            Some(10.0)
+        );
     }
 
     #[test]
-    fn stale_or_smaller_recharge_anchor_is_rejected() {
-        let records = QuotaRecordResponse::parse(
-            r#"{"success":true,"data":[{"grant_type":1,"status":1,"quota":500000,"balance_after":3000000,"created_time":10}]}"#,
-        )
-        .unwrap();
-        assert_eq!(records.latest_funded_balance_usd(7.0), None);
+    fn stale_or_smaller_browser_recharge_anchor_is_rejected() {
+        let now = DateTime::parse_from_rfc3339("2026-09-04T03:40:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let smaller = r#"{"version":1,"provider":"aihubmix","observed_at":1788492600,"payload":{"funded_balance_usd":6.0,"funding_created_at":1788400000,"source":"network"}}"#;
+        assert_eq!(
+            funded_balance_from_cache_raw(smaller, 7.0, now).unwrap(),
+            None
+        );
+
+        let stale = r#"{"version":1,"provider":"aihubmix","observed_at":1785000000,"payload":{"funded_balance_usd":10.0,"funding_created_at":1784000000,"source":"network"}}"#;
+        assert_eq!(
+            funded_balance_from_cache_raw(stale, 7.0, now).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -662,32 +598,12 @@ mod tests {
         assert_eq!(account.group, None);
     }
 
-    #[tokio::test]
-    async fn quota_record_request_supports_raw_user_access_token_without_regeneration() {
-        let mut server = mockito::Server::new_async().await;
-        let mock = server
-            .mock("GET", "/call/usr/quota_rec")
-            .match_query(mockito::Matcher::UrlEncoded("p".into(), "0".into()))
-            .match_header("authorization", "user-access-token")
-            .match_header("new-api-user", "123")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(
-                r#"{"success":true,"data":[{"grant_type":1,"status":1,"quota":5000000,"balance_after":5000000,"created_time":10}]}"#,
-            )
-            .create_async()
-            .await;
-
-        let records = fetch_quota_records_with_token(
-            &reqwest::Client::new(),
-            &format!("{}/call/usr/quota_rec?p=0", server.url()),
-            "user-access-token",
-            123,
-            false,
-        )
-        .await
-        .unwrap();
-        mock.assert_async().await;
-        assert_eq!(records.latest_funded_balance_usd(7.0), Some(10.0));
+    #[test]
+    fn browser_recharge_cache_rejects_secret_bearing_or_unknown_fields() {
+        let now = DateTime::parse_from_rfc3339("2026-09-04T03:40:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let raw = r#"{"version":1,"provider":"aihubmix","observed_at":1788492600,"payload":{"funded_balance_usd":10.0,"funding_created_at":1788400000,"source":"network","access_token":"must-not-cross-boundary"}}"#;
+        assert!(funded_balance_from_cache_raw(raw, 7.0, now).is_err());
     }
 }

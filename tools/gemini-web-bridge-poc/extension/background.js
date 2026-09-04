@@ -1,10 +1,13 @@
 const HOST_NAME = 'com.codexbar.gemini_web_bridge_poc';
 const QUOTA_MESSAGE = 'codexbar:gemini-apps-poc:quota';
 const SPEND_MESSAGE = 'codexbar:gemini-api-spend:summary';
+const AIHUBMIX_RECHARGE_MESSAGE = 'codexbar:aihubmix:recharge';
 const REFRESH_MESSAGE = 'codexbar:gemini-apps-poc:refresh';
 const SPEND_REFRESH_MESSAGE = 'codexbar:gemini-api-spend:refresh';
+const AIHUBMIX_REFRESH_MESSAGE = 'codexbar:aihubmix:recharge:refresh';
 const CACHE_KEY = 'codexbarGeminiAppsPocLastPush';
 const SPEND_CACHE_KEY = 'codexbarGeminiApiSpendLastPush';
+const AIHUBMIX_CACHE_KEY = 'codexbarAiHubMixRechargeLastPush';
 const REFRESH_ALARM = 'codexbar-gemini-apps-poc-refresh';
 const REFRESH_INTERVAL_MINUTES = 3;
 
@@ -76,6 +79,35 @@ function validSpendMessage(message, sender) {
     && validSpendPayload(payload);
 }
 
+function validAiHubMixPayload(payload) {
+  return payload
+    && Number.isFinite(payload.funded_balance_usd)
+    && payload.funded_balance_usd > 0
+    && (payload.funding_created_at == null
+      || (Number.isInteger(payload.funding_created_at) && payload.funding_created_at > 0))
+    && ['network', 'dom'].includes(payload.source)
+    && Object.keys(payload).every((key) =>
+      ['funded_balance_usd', 'funding_created_at', 'source'].includes(key));
+}
+
+function validAiHubMixMessage(message, sender) {
+  let url;
+  try {
+    url = new URL(sender?.url || '');
+  } catch (_) {
+    return false;
+  }
+  return message?.type === AIHUBMIX_RECHARGE_MESSAGE
+    && message.version === 1
+    && message.provider === 'aihubmix'
+    && sender?.frameId === 0
+    && url.origin === 'https://console.aihubmix.com'
+    && url.pathname === '/topup'
+    && Number.isInteger(message.observed_at)
+    && message.observed_at > 0
+    && validAiHubMixPayload(message.payload);
+}
+
 function connectNative() {
   if (nativePort) return nativePort;
   try {
@@ -135,7 +167,7 @@ async function captureAiStudioSpend(tabId) {
       await sleep(500);
     }
   } catch (_) {
-    // Browser-bridge capture is best effort. The native provider can fall back to local CDP.
+    // Browser-bridge capture is best effort; the last-known-good cache remains available.
   }
   return false;
 }
@@ -168,6 +200,21 @@ function refreshOpenGeminiTabs() {
   });
 }
 
+function refreshAiHubMixTab(tab) {
+  if (tab?.id == null) return;
+  chrome.tabs.sendMessage(tab.id, { type: AIHUBMIX_REFRESH_MESSAGE }, () => {
+    void chrome.runtime.lastError;
+  });
+}
+
+function refreshOpenBridgeTabs() {
+  refreshOpenGeminiTabs();
+  chrome.tabs.query({ url: ['https://console.aihubmix.com/topup*'] }, (tabs) => {
+    if (chrome.runtime.lastError) return;
+    for (const tab of tabs || []) refreshAiHubMixTab(tab);
+  });
+}
+
 async function ensureRefreshAlarm() {
   const alarm = await chrome.alarms.get(REFRESH_ALARM);
   if (!alarm) {
@@ -179,7 +226,7 @@ async function ensureRefreshAlarm() {
 
 async function restoreConnection() {
   connectNative();
-  refreshOpenGeminiTabs();
+  refreshOpenBridgeTabs();
 }
 
 chrome.runtime.onMessage.addListener((message, sender) => {
@@ -187,6 +234,8 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     ? CACHE_KEY
     : validSpendMessage(message, sender)
       ? SPEND_CACHE_KEY
+      : validAiHubMixMessage(message, sender)
+        ? AIHUBMIX_CACHE_KEY
       : null;
   if (!cacheKey) return;
   chrome.storage.local.set({ [cacheKey]: message }, () => void chrome.runtime.lastError);
@@ -195,10 +244,11 @@ chrome.runtime.onMessage.addListener((message, sender) => {
 
 chrome.action.onClicked.addListener(() => {
   connectNative();
-  void chrome.storage.local.get([CACHE_KEY, SPEND_CACHE_KEY]).then(async (stored) => {
+  void chrome.storage.local.get([CACHE_KEY, SPEND_CACHE_KEY, AIHUBMIX_CACHE_KEY]).then(async (stored) => {
     if (stored[CACHE_KEY]) await forward(stored[CACHE_KEY]);
     if (stored[SPEND_CACHE_KEY]) await forward(stored[SPEND_CACHE_KEY]);
-    refreshOpenGeminiTabs();
+    if (stored[AIHUBMIX_CACHE_KEY]) await forward(stored[AIHUBMIX_CACHE_KEY]);
+    refreshOpenBridgeTabs();
   });
 });
 
@@ -208,11 +258,11 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === REFRESH_ALARM) refreshOpenGeminiTabs();
+  if (alarm.name === REFRESH_ALARM) refreshOpenBridgeTabs();
 });
 
 chrome.idle.onStateChanged.addListener((state) => {
-  if (state === 'active') refreshOpenGeminiTabs();
+  if (state === 'active') refreshOpenBridgeTabs();
 });
 
 chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
@@ -221,6 +271,8 @@ chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
   if (url.startsWith('https://gemini.google.com/')
       || url.startsWith('https://aistudio.google.com/spend')) {
     refreshGeminiTab(tab);
+  } else if (url.startsWith('https://console.aihubmix.com/topup')) {
+    refreshAiHubMixTab(tab);
   }
 });
 
