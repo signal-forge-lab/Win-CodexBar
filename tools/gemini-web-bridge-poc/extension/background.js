@@ -45,7 +45,7 @@ function validSpendPayload(payload) {
     && Number.isFinite(payload.used)
     && payload.used >= 0
     && (payload.cap_used == null || (Number.isFinite(payload.cap_used) && payload.cap_used >= 0))
-    && (payload.limit == null || (Number.isFinite(payload.limit) && payload.limit >= 0))
+    && (payload.limit == null || (Number.isFinite(payload.limit) && payload.limit > 0))
     && (payload.limit == null || payload.cap_used != null)
     && /^(USD|EUR|GBP|JPY)$/.test(payload.currency || '')
     && typeof payload.period === 'string'
