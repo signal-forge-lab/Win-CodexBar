@@ -583,6 +583,35 @@ mod tests {
     }
 
     #[test]
+    fn aihubmix_recharge_anchor_drives_floatbar_depletion_metric() {
+        let mut snapshot = snapshot();
+        snapshot.provider_id = "aihubmix".to_string();
+        snapshot.display_name = "AIHubMix".to_string();
+        snapshot.source_label = "api".to_string();
+        snapshot.primary = window(30.0);
+        snapshot.secondary = None;
+        snapshot.cost = Some(crate::commands::CostSnapshotBridge {
+            used: 3.0,
+            limit: Some(10.0),
+            remaining: Some(7.0),
+            currency_code: "USD".to_string(),
+            currency_symbol: Some("$".to_string()),
+            period: "Credits".to_string(),
+            resets_at: None,
+            formatted_used: "$3.00".to_string(),
+            formatted_limit: Some("$10.00".to_string()),
+            balance: Some(7.0),
+            formatted_balance: Some("$7.00".to_string()),
+            daily: Vec::new(),
+        });
+
+        let selected = selected_usage_window(&snapshot, &Settings::default());
+        assert!((selected.used_percent - 30.0).abs() < f64::EPSILON);
+        assert!((selected.remaining_percent - 70.0).abs() < f64::EPSILON);
+        assert!(!selected.is_informational);
+    }
+
+    #[test]
     fn balance_without_limit_does_not_change_other_providers() {
         let mut snapshot = snapshot();
         snapshot.primary = window(40.0);
