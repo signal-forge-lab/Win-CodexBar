@@ -58,11 +58,29 @@ struct GeminiApiSpendPayload {
     source: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct AiHubMixRechargePush {
+    version: u32,
+    provider: String,
+    observed_at: i64,
+    payload: AiHubMixRechargePayload,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct AiHubMixRechargePayload {
+    funded_balance_usd: f64,
+    funding_created_at: Option<i64>,
+    source: String,
+}
+
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(untagged)]
 enum BrowserPush {
     GeminiApps(GeminiAppsPush),
     GeminiApi(GeminiApiSpendPush),
+    AiHubMix(AiHubMixRechargePush),
 }
 
 impl BrowserPush {
@@ -70,6 +88,7 @@ impl BrowserPush {
         match self {
             Self::GeminiApps(push) => &push.provider,
             Self::GeminiApi(push) => &push.provider,
+            Self::AiHubMix(push) => &push.provider,
         }
     }
 
@@ -77,6 +96,7 @@ impl BrowserPush {
         match self {
             Self::GeminiApps(push) => push.observed_at,
             Self::GeminiApi(push) => push.observed_at,
+            Self::AiHubMix(push) => push.observed_at,
         }
     }
 }
@@ -136,6 +156,7 @@ fn cache_path(provider: &str) -> Result<PathBuf, String> {
     let filename = match provider {
         "gemini-apps" => "gemini-apps-browser.json",
         "gemini-api" => "gemini-api-spend-browser.json",
+        "aihubmix" => "aihubmix-recharge-browser.json",
         other => return Err(format!("unsupported provider: {other}")),
     };
     dirs::data_local_dir()
@@ -215,6 +236,12 @@ fn parse_push(body: &[u8]) -> Result<BrowserPush, String> {
             validate_gemini_api_push(&push)?;
             Ok(BrowserPush::GeminiApi(push))
         }
+        Some("aihubmix") => {
+            let push: AiHubMixRechargePush = serde_json::from_value(value)
+                .map_err(|error| format!("invalid AIHubMix browser message: {error}"))?;
+            validate_aihubmix_push(&push)?;
+            Ok(BrowserPush::AiHubMix(push))
+        }
         Some(provider) => Err(format!("unsupported provider: {provider}")),
         None => Err("browser message is missing provider".to_string()),
     }
@@ -289,6 +316,29 @@ fn validate_gemini_api_push(push: &GeminiApiSpendPush) -> Result<(), String> {
     }
     if payload.source != "dom" {
         return Err("unsupported Gemini API parser source".to_string());
+    }
+    Ok(())
+}
+
+fn validate_aihubmix_push(push: &AiHubMixRechargePush) -> Result<(), String> {
+    if push.version != 1 || push.provider != "aihubmix" {
+        return Err("unsupported AIHubMix message version/provider".to_string());
+    }
+    if push.observed_at <= 0 {
+        return Err("observed_at must be a positive Unix timestamp".to_string());
+    }
+    let payload = &push.payload;
+    if !payload.funded_balance_usd.is_finite() || payload.funded_balance_usd <= 0.0 {
+        return Err("funded_balance_usd must be a finite positive amount".to_string());
+    }
+    if payload
+        .funding_created_at
+        .is_some_and(|timestamp| timestamp <= 0 || timestamp > push.observed_at + 60)
+    {
+        return Err("funding_created_at must be a plausible Unix timestamp".to_string());
+    }
+    if !matches!(payload.source.as_str(), "network" | "dom") {
+        return Err("unsupported AIHubMix parser source".to_string());
     }
     Ok(())
 }
@@ -415,6 +465,20 @@ mod tests {
         .unwrap()
     }
 
+    fn valid_aihubmix_json() -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "provider": "aihubmix",
+            "observed_at": 1_788_500_000,
+            "payload": {
+                "funded_balance_usd": 10.0,
+                "funding_created_at": 1_788_400_000,
+                "source": "network"
+            }
+        }))
+        .unwrap()
+    }
+
     #[test]
     fn accepts_only_the_secret_free_wire_contract() {
         let push = parse_push(&valid_json()).unwrap();
@@ -439,6 +503,17 @@ mod tests {
     }
 
     #[test]
+    fn accepts_sanitized_aihubmix_recharge_contract() {
+        let push = parse_push(&valid_aihubmix_json()).unwrap();
+        let BrowserPush::AiHubMix(push) = push else {
+            panic!("wrong provider")
+        };
+        assert_eq!(push.payload.funded_balance_usd, 10.0);
+        assert_eq!(push.payload.funding_created_at, Some(1_788_400_000));
+        assert_eq!(push.payload.source, "network");
+    }
+
+    #[test]
     fn unknown_token_or_cookie_fields_are_rejected() {
         let mut value: Value = serde_json::from_slice(&valid_json()).unwrap();
         value["payload"]["token"] = Value::String("must-not-cross-boundary".to_string());
@@ -452,6 +527,12 @@ mod tests {
         let mut value: Value = serde_json::from_slice(&valid_json()).unwrap();
         value["payload"]["cookie"] = Value::String("must-not-cross-boundary".to_string());
         assert!(parse_push(&serde_json::to_vec(&value).unwrap()).is_err());
+
+        for field in ["access_token", "authorization", "cookie", "records"] {
+            let mut value: Value = serde_json::from_slice(&valid_aihubmix_json()).unwrap();
+            value["payload"][field] = Value::String("must-not-cross-boundary".to_string());
+            assert!(parse_push(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
     }
 
     #[test]

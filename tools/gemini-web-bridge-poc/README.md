@@ -1,11 +1,11 @@
-# Gemini Browser Bridge
+# CodexBar Browser Bridge
 
-This bridge reads `gemini.google.com/usage` and the signed-in AI Studio
-`/spend` page without exporting Google cookies or page tokens from the browser.
-It started as an isolated PoC and is now consumed by two separate CodexBar
-providers: `geminiapps` for quota percentages and `gemini-api` for API spend.
-The extension is shown as **CodexBar Gemini Apps Bridge** in Chromium extension
-managers.
+This bridge reads `gemini.google.com/usage`, the signed-in AI Studio `/spend`
+page, and AIHubMix's signed-in `/topup` Transactions page without exporting
+cookies, authorization headers, Clerk JWTs, or page tokens from the browser.
+It started as an isolated Gemini PoC and is now consumed by `geminiapps`,
+`gemini-api`, and `aihubmix`. The extension is shown as **CodexBar Browser
+Bridge** in Chromium extension managers.
 
 The existing `gemini` provider remains separate and continues to report Gemini CLI / Code Assist quota.
 
@@ -27,10 +27,13 @@ AI Studio Spend page
   -> %LOCALAPPDATA%\CodexBar\gemini-api-spend-browser.json
   -> GeminiApiProvider (`gemini-api`)
 
-If the AI Studio Browser Bridge cache is missing or older than the preferred
-freshness window on Windows, `GeminiApiProvider` can use an already-approved
-local Chromium CDP endpoint. The page-side sanitizer returns only the same
-secret-free spend DTO, which is then persisted as last-known-good cache data.
+AIHubMix Topup / Transactions page
+  -> page-owned `/call/usr/quota_rec` response or visible table
+  -> sanitized latest funded `balance_after` amount only
+  -> Chrome Native Messaging
+  -> codexbar-gemini-web-bridge-poc.exe
+  -> %LOCALAPPDATA%\CodexBar\aihubmix-recharge-browser.json
+  -> AiHubMixProvider (`aihubmix`) + live Manage-Key current balance
 ```
 
 The cache may contain only:
@@ -50,6 +53,11 @@ currency, period/reset metadata when present, and a sanitized project label.
 The cap panel is interpreted as `current / cap`; its current amount is never
 mistaken for the configured cap. The provider deliberately does not invent a
 quota percentage when AI Studio exposes no configured cap.
+
+The AIHubMix recharge cache contains only the latest funded balance in USD,
+an optional funding timestamp, parser source, and observation time. The bridge
+does not export the Clerk JWT, Manage Key, access token, cookie header, email,
+raw Transactions response, or individual transaction records.
 
 ## Build the native host
 
@@ -100,9 +108,10 @@ powershell -ExecutionPolicy Bypass -File .\tools\gemini-web-bridge-poc\host\inst
 
 ## Capture a real reading
 
-1. Open `https://gemini.google.com/usage` for Gemini Apps quota and/or
-   `https://aistudio.google.com/spend` for Gemini API spend in the account you
-   want to measure.
+1. Open `https://gemini.google.com/usage` for Gemini Apps quota,
+   `https://aistudio.google.com/spend` for Gemini API spend, and/or
+   `https://console.aihubmix.com/topup` for AIHubMix recharge history in the
+   account you want to measure.
 2. Keep the Usage tab open for the first capture. `nativeMessaging` is declared
    by the PoC extension, while the native host itself still accepts only the
    exact unpacked extension origin registered by `install-native-host.ps1`.
@@ -111,6 +120,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\gemini-web-bridge-poc\host\inst
 ```text
 %LOCALAPPDATA%\CodexBar\gemini-apps-browser.json
 %LOCALAPPDATA%\CodexBar\gemini-api-spend-browser.json
+%LOCALAPPDATA%\CodexBar\aihubmix-recharge-browser.json
 ```
 
 Expected shape is documented in `docs/experiments/gemini-apps-browser-bridge-poc.md`.
@@ -128,13 +138,17 @@ cargo test -p codexbar --bin codexbar-gemini-web-bridge-poc
 
 - Gemini's internal RPCs are undocumented.
 - Fresh readings require signed-in Gemini / AI Studio browser sessions.
-  Refreshes run only against already-open matching tabs. If no Gemini Apps or
-  AI Studio Spend tab exists, the bridge does nothing and never creates one on
-  its own. The bridge never activates a tab or moves keyboard/mouse focus. It
-  disables Memory Saver auto-discard for matching tabs and may reload a matching
-  background tab if Chromium already discarded or froze it.
+  AIHubMix recharge capture likewise requires an already-open signed-in Topup
+  tab. If no matching tab exists, the bridge does nothing and never creates one
+  on its own. The bridge never activates an AIHubMix tab, reloads it, or moves
+  keyboard/mouse focus. Gemini / AI Studio retain their existing refresh logic.
 - CodexBar's Gemini API provider consumes only this Browser Bridge cache during
   provider refreshes and does not initiate a DevTools/CDP connection itself.
+- CodexBar's AIHubMix Auto mode uses the Manage Key only for current balance and
+  the secret-free Browser Bridge cache for the funded-balance anchor. It never
+  calls `/api/user/token`, never calls the Clerk-protected Transactions endpoint
+  from the native provider, and never initiates CDP. Explicit `Web` mode remains
+  a separate opt-in browser/CDP balance path.
 - The AI Studio DOM parser accepts the current English/Japanese Spend layouts,
   including split label/value rows. It records net `Total cost` / `総費用`, not
   pre-discount charges, and leaves the spend cap unknown when the UI only offers
