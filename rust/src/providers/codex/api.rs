@@ -21,10 +21,14 @@ const DEFAULT_BASE_URL: &str = "https://chatgpt.com/backend-api";
 const USAGE_PATH: &str = "/wham/usage";
 const RESET_CREDITS_PATH: &str = "/wham/rate-limit-reset-credits";
 const CREDENTIAL_CACHE_TTL: Duration = Duration::from_secs(5);
-/// How long an external OAuth token set is trusted after the CLI last
-/// refreshed it. Matches the CLI's own `needs_refresh` window (8 days) so a
-/// token the CLI considers fresh is also trusted here (upstream 0.50.1 #2944).
+/// Fallback trust window for older/non-JWT external OAuth credentials that do
+/// not expose an access-token expiry. Current Codex refreshes ChatGPT OAuth
+/// credentials based on the access token's `exp` claim, so a valid JWT must
+/// not be rejected merely because `last_refresh` is older than this window.
 const EXTERNAL_OAUTH_STALENESS_WINDOW: chrono::TimeDelta = chrono::Duration::days(8);
+/// Codex refreshes access tokens when they enter roughly the final five
+/// minutes of validity. CodexBar remains read-only and fails closed once the
+/// CLI-owned access token reaches that margin.
 const EXTERNAL_OAUTH_REFRESH_WINDOW: chrono::TimeDelta = chrono::Duration::minutes(5);
 
 static CREDENTIAL_CACHE: OnceLock<Mutex<Option<CachedCodexCredentials>>> = OnceLock::new();
@@ -405,12 +409,11 @@ impl CodexApi {
         })
     }
 
-    /// Upstream 0.50.1 #2944: when `codex_external_oauth_sources_allowed` is
-    /// OFF (the default), stale external OAuth credential files fail closed
-    /// instead of being used silently. An external OAuth source is an
-    /// auth.json `tokens` object with a `refresh_token` (CLI-owned OAuth,
-    /// not an API key). "Stale" means the CLI has not refreshed the token
-    /// recently (no `last_refresh`, or older than the staleness window).
+    /// When `codex_external_oauth_sources_allowed` is OFF (the default), stale
+    /// external OAuth credentials fail closed instead of being used silently.
+    /// Current Codex access tokens are JWTs and their `exp` claim is the source
+    /// of truth for freshness. `last_refresh` remains a conservative fallback
+    /// for older/non-JWT credential formats.
     fn enforce_external_oauth_gate(credentials: &CodexCredentials) -> Result<(), ProviderError> {
         Self::enforce_external_oauth_gate_at(
             credentials,
@@ -427,7 +430,7 @@ impl CodexApi {
         if !credentials.is_external_oauth {
             return Ok(());
         }
-        if !external_sources_allowed {
+        if !external_sources_allowed && credentials.access_token_expires_at.is_none() {
             let is_stale = credentials
                 .last_refresh
                 .is_none_or(|last| now - last > EXTERNAL_OAUTH_STALENESS_WINDOW);
@@ -979,9 +982,9 @@ struct CodexCredentials {
     /// Native access-token JWT expiry. When available, this is authoritative
     /// for refresh scheduling; the CLI still owns the refresh lifecycle.
     access_token_expires_at: Option<DateTime<Utc>>,
-    /// `last_refresh` timestamp from auth.json, when present. Used to detect
-    /// stale external OAuth tokens that should fail closed when the opt-in
-    /// setting is OFF.
+    /// `last_refresh` timestamp from auth.json, when present. Used only as a
+    /// fallback freshness signal when the access token does not expose a JWT
+    /// `exp` claim.
     last_refresh: Option<DateTime<Utc>>,
 }
 
@@ -1983,7 +1986,7 @@ mod tests {
     }
 
     #[test]
-    fn external_oauth_staleness_gate_precedes_future_jwt_expiry() {
+    fn external_oauth_future_jwt_expiry_overrides_old_last_refresh() {
         let now = Utc::now();
         let future = now + chrono::Duration::hours(2);
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -1994,9 +1997,7 @@ mod tests {
         );
         let creds = CodexApi::parse_credentials_json(&json).expect("credentials");
         assert!(creds.access_token_expires_at.is_some());
-        let err = CodexApi::enforce_external_oauth_gate_at(&creds, false, now)
-            .expect_err("stale external OAuth must not be revived by JWT expiry");
-        assert!(matches!(err, ProviderError::AuthRequired));
+        assert!(CodexApi::enforce_external_oauth_gate_at(&creds, false, now).is_ok());
         assert!(CodexApi::enforce_external_oauth_gate_at(&creds, true, now).is_ok());
     }
 
