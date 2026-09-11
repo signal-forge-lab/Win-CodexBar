@@ -416,8 +416,11 @@ mod tests {
             formatted_used: "$15.00".to_string(),
             formatted_limit: None,
             balance: Some(5.0),
+            balance_updated_at: None,
+            account_id: None,
             formatted_balance: Some("$5.00".to_string()),
             daily: Vec::new(),
+            always_visible: false,
         });
 
         let selected = selected_usage_window(&snapshot, &Settings::default());
@@ -446,8 +449,11 @@ mod tests {
             formatted_used: "$0.00".to_string(),
             formatted_limit: None,
             balance: Some(5.0),
+            balance_updated_at: None,
+            account_id: None,
             formatted_balance: Some("$5.00".to_string()),
             daily: Vec::new(),
+            always_visible: false,
         });
 
         let selected = selected_usage_window(&snapshot, &Settings::default());
@@ -475,8 +481,11 @@ mod tests {
             formatted_used: "$3.00".to_string(),
             formatted_limit: Some("$10.00".to_string()),
             balance: Some(7.0),
+            balance_updated_at: None,
+            account_id: None,
             formatted_balance: Some("$7.00".to_string()),
             daily: Vec::new(),
+            always_visible: false,
         });
 
         let selected = selected_usage_window(&snapshot, &Settings::default());
@@ -501,8 +510,11 @@ mod tests {
             formatted_used: "$15.00".to_string(),
             formatted_limit: None,
             balance: Some(5.0),
+            balance_updated_at: None,
+            account_id: None,
             formatted_balance: Some("$5.00".to_string()),
             daily: Vec::new(),
+            always_visible: false,
         });
 
         let selected = selected_usage_window(&snapshot, &Settings::default());

@@ -256,7 +256,7 @@ fn write_cache(push: &BrowserPush) -> Result<PathBuf, String> {
         .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
     let bytes = serde_json::to_vec_pretty(push)
         .map_err(|error| format!("cannot serialize cache: {error}"))?;
-    codexbar::cli::dashboard::write_atomic(&path, &bytes)
+    codexbar::atomic_file::write_atomic(&path, &bytes)
         .map_err(|error| format!("cannot atomically write {}: {error}", path.display()))?;
     Ok(path)
 }
@@ -550,11 +550,13 @@ mod tests {
     fn native_frames_are_length_bounded_and_round_trip() {
         let body = valid_json();
         let mut framed = Vec::new();
-        framed.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        let body_len = u32::try_from(body.len()).expect("test frame length fits u32");
+        framed.extend_from_slice(&body_len.to_le_bytes());
         framed.extend_from_slice(&body);
         assert_eq!(read_frame(&mut Cursor::new(framed)).unwrap().unwrap(), body);
 
-        let prefix = ((MAX_FRAME_BYTES + 1) as u32).to_le_bytes();
+        let oversized_len = u32::try_from(MAX_FRAME_BYTES + 1).expect("frame cap fits u32");
+        let prefix = oversized_len.to_le_bytes();
         assert_eq!(
             read_frame(&mut Cursor::new(prefix)).unwrap_err().kind(),
             io::ErrorKind::InvalidData
