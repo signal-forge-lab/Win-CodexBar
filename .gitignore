@@ -62,11 +62,21 @@ nul
 .env
 .env.*
 /.local/
-# Docs children ignored generally; ADRs are product docs and stay trackable
-/docs/*
-!/docs/adr/
-/docs/adr/*
-!/docs/adr/*.md
+
+# Local-only configuration and secret material
+/config.local.json
+/local-config.json
+/local/
+/secrets/
+*.key
+*.pem
+
+# Local tool/cache state
+/.cargo-home/
+/.orchestrator/
+/.pnpm-store/
+
+# Public documentation is tracked by default.
 /scripts/*
 /docs/ui-parity-workflow.md
 /scripts/crop_vm_preferences_proof.sh
