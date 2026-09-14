@@ -15,7 +15,6 @@ import { useProviders } from "../hooks/useProviders";
 import {
   getProviderLocalUsageSummary,
   getSettingsSnapshot,
-  refreshProvidersIfStale,
 } from "../lib/tauri";
 import { ProviderIcon } from "../components/providers/ProviderIcon";
 import { getProviderIcon } from "../components/providers/providerIcons";
@@ -276,7 +275,7 @@ function ProviderPill({
  */
 export default function FloatBar({ state }: { state: BootstrapState }) {
   const { t } = useLocale();
-  const { providers } = useProviders({
+  const { providers, refreshIfStale } = useProviders({
     refreshOnMount: false,
   });
   const startDrag = useCallback((event: MouseEvent<HTMLElement>) => {
@@ -313,12 +312,12 @@ export default function FloatBar({ state }: { state: BootstrapState }) {
       ? Math.max(baseMs, 30 * 60 * 1000)
       : baseMs;
     const tick = () => {
-      void refreshProvidersIfStale().catch(() => {});
+      refreshIfStale();
     };
     tick();
     const id = setInterval(tick, intervalMs);
     return () => clearInterval(id);
-  }, [settings.refreshIntervalSecs, settings.lowPowerMode]);
+  }, [settings.refreshIntervalSecs, settings.lowPowerMode, refreshIfStale]);
 
   useEffect(() => {
     const unlisten = listen(FLOAT_BAR_CONFIG_CHANGED_EVENT, () => {

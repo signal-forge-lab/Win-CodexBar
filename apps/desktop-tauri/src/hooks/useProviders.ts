@@ -39,6 +39,13 @@ export interface UseProvidersResult {
   refreshingProviderIds: ReadonlySet<string>;
   /** Trigger a manual refresh. No-op if already refreshing. */
   refresh: () => void;
+  /**
+   * Trigger a stale-aware refresh and then reconcile local React state from
+   * the backend's canonical provider cache. Passive surfaces such as the
+   * Float Bar use this so they self-heal even if a streamed provider event was
+   * missed while the WebView was suspended or not yet subscribed.
+   */
+  refreshIfStale: () => void;
   /** Summary from the last completed refresh cycle, if any. */
   lastRefresh: RefreshCompletePayload | null;
   /** True when the hook has provider data that can stay visible during refresh. */
@@ -72,6 +79,8 @@ export function useProviders(options: UseProvidersOptions = {}): UseProvidersRes
   const resetRefreshTimerRef = useRef<number | undefined>(undefined);
   const settingsReloadEpochRef = useRef(0);
   const settingsReloadingRef = useRef(false);
+  const providerUpdateEpochRef = useRef(0);
+  const mountedRef = useRef(false);
 
   const mergeSnapshots = useCallback((snapshots: ProviderUsageSnapshot[]) => {
     if (snapshots.length === 0) return;
@@ -101,6 +110,21 @@ export function useProviders(options: UseProvidersOptions = {}): UseProvidersRes
     mergeSnapshots(snapshots);
   }, [mergeSnapshots]);
 
+  const reconcileCachedProviders = useCallback(async () => {
+    const settingsEpoch = settingsReloadEpochRef.current;
+    const providerUpdateEpoch = providerUpdateEpochRef.current;
+    const cached = await getCachedProviders();
+    if (
+      !mountedRef.current ||
+      settingsReloadingRef.current ||
+      settingsEpoch !== settingsReloadEpochRef.current ||
+      providerUpdateEpoch !== providerUpdateEpochRef.current
+    ) {
+      return;
+    }
+    mergeSnapshots(cached);
+  }, [mergeSnapshots]);
+
   const queueSnapshot = useCallback((snapshot: ProviderUsageSnapshot) => {
     pendingSnapshotsRef.current.set(snapshot.providerId, snapshot);
     if (settingsReloadingRef.current || flushTimerRef.current !== undefined) return;
@@ -116,16 +140,34 @@ export function useProviders(options: UseProvidersOptions = {}): UseProvidersRes
     });
   }, []);
 
+  const refreshIfStale = useCallback(() => {
+    refreshProvidersIfStale()
+      .then(reconcileCachedProviders)
+      .catch(() => {
+        // The next backend refresh/event can recover. Passive surfaces should
+        // not turn a transient refresh failure into a visible UI error here.
+      });
+  }, [reconcileCachedProviders]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
     // Load existing cache first.
     const initialEpoch = settingsReloadEpochRef.current;
+    const initialProviderUpdateEpoch = providerUpdateEpochRef.current;
     getCachedProviders()
       .then((cached) => {
         if (
           !cancelled &&
           initialEpoch === settingsReloadEpochRef.current &&
+          initialProviderUpdateEpoch === providerUpdateEpochRef.current &&
           cached.length > 0
         ) {
           mergeSnapshots(cached);
@@ -142,6 +184,7 @@ export function useProviders(options: UseProvidersOptions = {}): UseProvidersRes
       "provider-updated",
       (event) => {
         if (!cancelled) {
+          providerUpdateEpochRef.current += 1;
           queueSnapshot(event.payload);
           setRefreshingProviderIds(
             (current) =>
@@ -190,6 +233,7 @@ export function useProviders(options: UseProvidersOptions = {}): UseProvidersRes
           refreshingRef.current = false;
           setRefreshingProviderIds(new Set());
           setLastRefresh(event.payload);
+          void reconcileCachedProviders().catch(() => {});
         }
       },
     );
@@ -246,6 +290,7 @@ export function useProviders(options: UseProvidersOptions = {}): UseProvidersRes
     flushPendingSnapshots,
     mergeSnapshots,
     queueSnapshot,
+    reconcileCachedProviders,
   ]);
 
   useEffect(() => {
@@ -295,6 +340,7 @@ export function useProviders(options: UseProvidersOptions = {}): UseProvidersRes
     isRefreshing: refreshingProviderIds.size > 0,
     refreshingProviderIds,
     refresh,
+    refreshIfStale,
     lastRefresh,
     hasCachedData: providers.length > 0,
     hasLoadedCache,

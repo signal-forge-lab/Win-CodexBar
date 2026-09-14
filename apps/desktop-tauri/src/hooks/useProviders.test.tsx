@@ -127,18 +127,75 @@ describe("useProviders", () => {
     });
     expect(tauriMocks.refreshProvidersIfStale).not.toHaveBeenCalled();
 
-    act(() => {
+    await act(async () => {
       emitProviderEvent("provider-updated", provider("live", 30));
       emitProviderEvent("refresh-complete", {
         providerCount: 1,
         errorCount: 0,
       });
+      await Promise.resolve();
     });
 
     expect(result.current.providers.map((snapshot) => snapshot.providerId)).toEqual([
       "cached",
       "live",
     ]);
+  });
+
+  it("does not let a slow initial cache read overwrite a newer provider event", async () => {
+    let resolveInitial!: (snapshots: ProviderUsageSnapshot[]) => void;
+    tauriMocks.getCachedProviders.mockImplementationOnce(
+      () =>
+        new Promise<ProviderUsageSnapshot[]>((resolve) => {
+          resolveInitial = resolve;
+        }),
+    );
+
+    const { result } = renderHook(() => useProviders({ refreshOnMount: false }));
+    await waitFor(() => expect(eventMocks.listeners.get("provider-updated")).toHaveLength(1));
+
+    act(() => emitProviderEvent("provider-updated", provider("gemini-api", 91.4)));
+    await act(async () => {
+      resolveInitial([provider("gemini-api", 0)]);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+
+    expect(result.current.providers[0]?.primary.usedPercent).toBe(91.4);
+  });
+
+  it("reconciles from canonical cache after a stale-aware refresh when an event is missed", async () => {
+    tauriMocks.getCachedProviders
+      .mockResolvedValueOnce([provider("gemini-api", 0)])
+      .mockResolvedValueOnce([provider("gemini-api", 91.4)]);
+
+    const { result } = renderHook(() => useProviders({ refreshOnMount: false }));
+    await waitFor(() => expect(result.current.providers[0]?.primary.usedPercent).toBe(0));
+
+    act(() => result.current.refreshIfStale());
+
+    await waitFor(() => expect(result.current.providers[0]?.primary.usedPercent).toBe(91.4));
+    expect(tauriMocks.refreshProvidersIfStale).toHaveBeenCalledTimes(1);
+    expect(tauriMocks.getCachedProviders).toHaveBeenCalledTimes(2);
+  });
+
+  it("reconciles from canonical cache when refresh completes without a provider event", async () => {
+    tauriMocks.getCachedProviders
+      .mockResolvedValueOnce([provider("gemini-api", 0)])
+      .mockResolvedValueOnce([provider("gemini-api", 91.4)]);
+
+    const { result } = renderHook(() => useProviders({ refreshOnMount: false }));
+    await waitFor(() => expect(result.current.providers[0]?.primary.usedPercent).toBe(0));
+
+    act(() => {
+      emitProviderEvent("refresh-complete", {
+        providerCount: 1,
+        errorCount: 0,
+      });
+    });
+
+    await waitFor(() => expect(result.current.providers[0]?.primary.usedPercent).toBe(91.4));
   });
 
   it("reloads cached provider presentation when settings change", async () => {
