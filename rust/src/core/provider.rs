@@ -88,6 +88,7 @@ pub enum ProviderId {
     Meta,
     OrcaRouter,
     AiHubMix,
+    Bai,
 }
 
 impl ProviderId {
@@ -169,6 +170,7 @@ impl ProviderId {
             ProviderId::Meta,
             ProviderId::OrcaRouter,
             ProviderId::AiHubMix,
+            ProviderId::Bai,
         ]
     }
 
@@ -216,6 +218,7 @@ impl ProviderId {
             ProviderId::Meta => "meta",
             ProviderId::OrcaRouter => "orcarouter",
             ProviderId::AiHubMix => "aihubmix",
+            ProviderId::Bai => "bai",
             ProviderId::AiAnd => "aiand",
             ProviderId::Windsurf => "windsurf",
             ProviderId::Manus => "manus",
@@ -298,6 +301,7 @@ impl ProviderId {
             ProviderId::Meta => "Meta",
             ProviderId::OrcaRouter => "OrcaRouter",
             ProviderId::AiHubMix => "AIHubMix",
+            ProviderId::Bai => "b.ai",
             ProviderId::AiAnd => "ai&",
             ProviderId::Windsurf => "Windsurf",
             ProviderId::Manus => "Manus",
@@ -393,6 +397,7 @@ impl ProviderId {
             ProviderId::Meta => None,
             ProviderId::OrcaRouter => Some("www.orcarouter.ai"),
             ProviderId::AiHubMix => None,
+            ProviderId::Bai => None,
             ProviderId::AiAnd => None,
             ProviderId::Windsurf => None,
             ProviderId::Doubao => None,
@@ -476,6 +481,7 @@ impl ProviderId {
             | "meta muse spark" => Some(ProviderId::Meta),
             "orcarouter" | "orca" | "orca-router" => Some(ProviderId::OrcaRouter),
             "aihubmix" | "aihub-mix" | "ai hub mix" => Some(ProviderId::AiHubMix),
+            "bai" | "b.ai" | "b-ai" => Some(ProviderId::Bai),
             "aiand" | "ai&" | "ai-and" | "ai and" => Some(ProviderId::AiAnd),
             "windsurf" | "codeium" => Some(ProviderId::Windsurf),
             "manus" => Some(ProviderId::Manus),
@@ -880,6 +886,8 @@ pub fn cli_name_map() -> HashMap<&'static str, ProviderId> {
     map.insert("orca-router", ProviderId::OrcaRouter);
     map.insert("aihub-mix", ProviderId::AiHubMix);
     map.insert("ai hub mix", ProviderId::AiHubMix);
+    map.insert("b.ai", ProviderId::Bai);
+    map.insert("b-ai", ProviderId::Bai);
     map.insert("ai&", ProviderId::AiAnd);
     map.insert("ai-and", ProviderId::AiAnd);
     map.insert("codeium", ProviderId::Windsurf);
@@ -1017,6 +1025,7 @@ pub fn brand_color(id: ProviderId) -> &'static str {
         ProviderId::Meta => "#0467DF",
         ProviderId::OrcaRouter => "#0891B2",
         ProviderId::AiHubMix => "#2563EB",
+        ProviderId::Bai => "#111827",
     }
 }
 
@@ -1031,7 +1040,7 @@ mod tests {
     #[test]
     fn test_provider_id_all() {
         let all = ProviderId::all();
-        assert_eq!(all.len(), 75);
+        assert_eq!(all.len(), 76);
         assert!(all.contains(&ProviderId::Claude));
         assert!(all.contains(&ProviderId::Codex));
         assert!(all.contains(&ProviderId::Fireworks));
@@ -1085,6 +1094,7 @@ mod tests {
         assert!(all.contains(&ProviderId::Meta));
         assert!(all.contains(&ProviderId::OrcaRouter));
         assert!(all.contains(&ProviderId::AiHubMix));
+        assert!(all.contains(&ProviderId::Bai));
         assert!(all.contains(&ProviderId::GeminiApps));
         assert!(all.contains(&ProviderId::GeminiApi));
     }
@@ -1414,6 +1424,17 @@ mod tests {
             Some(ProviderId::AiHubMix)
         );
         assert_eq!(ProviderId::AiHubMix.cookie_domain(), None);
+    }
+
+    #[test]
+    fn bai_metadata_and_aliases() {
+        assert_eq!(ProviderId::Bai.cli_name(), "bai");
+        assert_eq!(ProviderId::Bai.display_name(), "b.ai");
+        assert_eq!(ProviderId::from_cli_name("bai"), Some(ProviderId::Bai));
+        assert_eq!(ProviderId::from_cli_name("b.ai"), Some(ProviderId::Bai));
+        assert_eq!(ProviderId::from_cli_name("b-ai"), Some(ProviderId::Bai));
+        assert_eq!(ProviderId::Bai.cookie_domain(), None);
+        assert_eq!(brand_color(ProviderId::Bai), "#111827");
     }
 
     #[test]

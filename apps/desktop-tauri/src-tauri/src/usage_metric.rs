@@ -93,6 +93,13 @@ fn automatic_window(
     snapshot: &ProviderUsageSnapshot,
     provider: Option<ProviderId>,
 ) -> Option<RateWindowSnapshot> {
+    // b.ai's primary lane is the user-requested purchased-credit depletion.
+    // The secondary lane includes promotional bonus credits and may therefore
+    // have a higher percentage while purchased credits remain untouched.
+    if provider == Some(ProviderId::Bai) && !snapshot.primary.is_informational {
+        return Some(snapshot.primary.clone());
+    }
+
     // Cursor's Auto usage is the monthly included allowance, surfaced by the
     // provider in the semantic secondary slot. Do not let a higher percentage
     // in the aggregate or API slot change which quota Automatic represents.
@@ -617,6 +624,50 @@ mod tests {
         let selected = selected_usage_window(&snapshot, &Settings::default());
         assert!((selected.used_percent - 30.0).abs() < f64::EPSILON);
         assert!((selected.remaining_percent - 70.0).abs() < f64::EPSILON);
+        assert!(!selected.is_informational);
+    }
+
+    #[test]
+    fn bai_purchased_credit_percentage_drives_floatbar_metric() {
+        let mut snapshot = snapshot();
+        snapshot.provider_id = "bai".to_string();
+        snapshot.display_name = "b.ai".to_string();
+        snapshot.source_label = "browser-cdp".to_string();
+        snapshot.primary = window(20.0);
+        snapshot.secondary = Some(RateWindowSnapshot {
+            used_percent: 46.6666666667,
+            remaining_percent: 53.3333333333,
+            window_minutes: None,
+            resets_at: None,
+            reset_description: Some("8M remaining of 15M total".to_string()),
+            is_exhausted: false,
+            is_informational: false,
+            reserve_percent: None,
+            reserve_description: None,
+            reserve_will_last_to_reset: false,
+            reserve_eta_seconds: None,
+        });
+        snapshot.cost = Some(crate::commands::CostSnapshotBridge {
+            used: 3_000_000.0,
+            limit: Some(15_000_000.0),
+            remaining: Some(12_000_000.0),
+            currency_code: "points".to_string(),
+            currency_symbol: None,
+            period: "Funded credits".to_string(),
+            resets_at: None,
+            formatted_used: "3000000.00 points".to_string(),
+            formatted_limit: Some("15000000.00 points".to_string()),
+            balance: Some(12_000_000.0),
+            balance_updated_at: None,
+            account_id: None,
+            formatted_balance: Some("12000000.00 points".to_string()),
+            daily: Vec::new(),
+            always_visible: false,
+        });
+
+        let selected = selected_usage_window(&snapshot, &Settings::default());
+        assert!((selected.used_percent - 20.0).abs() < f64::EPSILON);
+        assert!((selected.remaining_percent - 80.0).abs() < f64::EPSILON);
         assert!(!selected.is_informational);
     }
 

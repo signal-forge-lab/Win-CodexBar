@@ -72,4 +72,5 @@ export const TEST_PROVIDER_CATALOG: Array<[string, string]> = [
   ["meta", "Meta"],
   ["orcarouter", "OrcaRouter"],
   ["aihubmix", "AIHubMix"],
+  ["bai", "b.ai"],
 ];

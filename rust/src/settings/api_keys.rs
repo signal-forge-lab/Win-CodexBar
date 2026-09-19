@@ -599,5 +599,16 @@ pub fn get_api_key_providers() -> Vec<ProviderConfigInfo> {
             config_file_path: None,
             dashboard_url: Some("https://console.aihubmix.com/topup"),
         },
+        ProviderConfigInfo {
+            id: ProviderId::Bai,
+            name: "b.ai",
+            requires_api_key: false,
+            api_key_env_var: None,
+            api_key_help: Some(
+                "Uses an already-open signed-in https://chat.b.ai/usage or /purchase tab from a local Edge/Chrome DevTools session. CodexBar reads only sanitized balance, monthly usage, and successful funding-history totals; cookies and API access tokens are never extracted.",
+            ),
+            config_file_path: None,
+            dashboard_url: Some("https://chat.b.ai/usage"),
+        },
     ]
 }

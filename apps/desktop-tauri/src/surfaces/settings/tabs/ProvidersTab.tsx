@@ -223,6 +223,7 @@ function providerSourceHintShort(
     case "commandcode":
     case "geminiapps":
     case "gemini-api":
+    case "bai":
       return t("ProviderSourceWebShort");
     case "gemini":
     case "antigravity":

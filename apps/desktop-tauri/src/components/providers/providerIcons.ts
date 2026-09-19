@@ -226,6 +226,7 @@ export const PROVIDER_ICON_REGISTRY: Record<string, ProviderIcon> = {
   meta:        { id: "meta",        brandColor: "#0467DF", fallbackLetter: "M", svgPath: RAW.meta },
   orcarouter:  { id: "orcarouter",  brandColor: "#0891b2", fallbackLetter: "O" },
   aihubmix:    { id: "aihubmix",    brandColor: "#2563eb", fallbackLetter: "A" },
+  bai:         { id: "bai",         brandColor: "#111827", fallbackLetter: "B" },
 };
 
 const ALIASES: Record<string, string> = {
@@ -316,6 +317,8 @@ const ALIASES: Record<string, string> = {
   "muse-spark": "meta",
   "muse spark": "meta",
   "meta muse spark": "meta",
+  "b.ai": "bai",
+  "b-ai": "bai",
 };
 
 function normalize(id: string): string {

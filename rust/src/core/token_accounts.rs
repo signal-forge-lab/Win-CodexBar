@@ -365,7 +365,8 @@ impl TokenAccountSupport {
             | ProviderId::QwenCloud
             | ProviderId::Fireworks
             | ProviderId::Meta
-            | ProviderId::AiHubMix => None,
+            | ProviderId::AiHubMix
+            | ProviderId::Bai => None,
         }
     }
 
