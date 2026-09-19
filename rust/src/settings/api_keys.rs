@@ -605,7 +605,7 @@ pub fn get_api_key_providers() -> Vec<ProviderConfigInfo> {
             requires_api_key: false,
             api_key_env_var: None,
             api_key_help: Some(
-                "Uses an already-open signed-in https://chat.b.ai/usage or /purchase tab from a local Edge/Chrome DevTools session. CodexBar reads only sanitized balance, monthly usage, and successful funding-history totals; cookies and API access tokens are never extracted.",
+                "Uses the existing signed-in chat.b.ai browser session, like other Web providers. CodexBar imports the session cookie locally and never reads or stores b.ai's API access token.",
             ),
             config_file_path: None,
             dashboard_url: Some("https://chat.b.ai/usage"),

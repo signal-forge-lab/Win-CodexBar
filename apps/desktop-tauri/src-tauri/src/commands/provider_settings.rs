@@ -186,6 +186,7 @@ fn cookie_source_provider(provider_id: &str) -> Option<codexbar::core::ProviderI
         "notion" => ProviderId::Notion,
         "grok" => ProviderId::Grok,
         "orcarouter" => ProviderId::OrcaRouter,
+        "bai" => ProviderId::Bai,
         _ => return None,
     })
 }
@@ -341,8 +342,31 @@ fn litellm_workspace_change_allowed(
 #[cfg(test)]
 mod tests {
     use codexbar::core::ProviderId;
+    use codexbar::settings::Language;
 
-    use super::{litellm_workspace_change_allowed, workspace_provider};
+    use super::{
+        cookie_source_options_for, cookie_source_provider, litellm_workspace_change_allowed,
+        workspace_provider,
+    };
+
+    #[test]
+    fn bai_exposes_standard_browser_session_cookie_sources() {
+        assert_eq!(cookie_source_provider("bai"), Some(ProviderId::Bai));
+        let options = cookie_source_options_for("bai", Language::English);
+        assert_eq!(
+            options
+                .iter()
+                .map(|option| option.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["auto", "manual"]
+        );
+        assert!(
+            options[0]
+                .description
+                .as_deref()
+                .is_some_and(|text| text.contains("chat.b.ai browser session"))
+        );
+    }
 
     #[test]
     fn maps_opencode_go_workspace_provider() {
@@ -704,6 +728,22 @@ pub fn cookie_source_options_for(provider_id: &str, lang: Language) -> Vec<Cooki
                 "manual",
                 "",
                 "Paste a Cookie header from www.orcarouter.ai.",
+                None,
+            ),
+        ],
+        "bai" => vec![
+            cookie_option(
+                lang,
+                "auto",
+                "Automatically imports the signed-in chat.b.ai browser session.",
+                "",
+                None,
+            ),
+            cookie_option(
+                lang,
+                "manual",
+                "",
+                "Paste a Cookie header from a chat.b.ai request.",
                 None,
             ),
         ],

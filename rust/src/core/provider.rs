@@ -397,7 +397,7 @@ impl ProviderId {
             ProviderId::Meta => None,
             ProviderId::OrcaRouter => Some("www.orcarouter.ai"),
             ProviderId::AiHubMix => None,
-            ProviderId::Bai => None,
+            ProviderId::Bai => Some("chat.b.ai"),
             ProviderId::AiAnd => None,
             ProviderId::Windsurf => None,
             ProviderId::Doubao => None,
@@ -1433,7 +1433,7 @@ mod tests {
         assert_eq!(ProviderId::from_cli_name("bai"), Some(ProviderId::Bai));
         assert_eq!(ProviderId::from_cli_name("b.ai"), Some(ProviderId::Bai));
         assert_eq!(ProviderId::from_cli_name("b-ai"), Some(ProviderId::Bai));
-        assert_eq!(ProviderId::Bai.cookie_domain(), None);
+        assert_eq!(ProviderId::Bai.cookie_domain(), Some("chat.b.ai"));
         assert_eq!(brand_color(ProviderId::Bai), "#111827");
     }
 

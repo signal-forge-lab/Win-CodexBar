@@ -1,13 +1,9 @@
-//! b.ai funded-credit usage from an already-open signed-in browser tab.
+//! b.ai funded-credit usage from the user's existing browser session.
 //!
-//! The provider intentionally does not read cookies, localStorage, or the
-//! `apiAccessToken` returned by b.ai's user-state endpoint.  Instead it uses a
-//! locally exposed Chromium DevTools endpoint only to evaluate same-origin
-//! requests inside an existing `chat.b.ai/usage` or `chat.b.ai/purchase` tab.
-//! The browser-side result is reduced to non-secret credit totals before it
-//! crosses back into CodexBar.
+//! Authentication follows the same browser-cookie import path as the other
+//! Web providers. CodexBar never reads or stores b.ai's API access token.
 
-mod cdp;
+mod web;
 
 use async_trait::async_trait;
 
@@ -184,7 +180,7 @@ fn result_from_values(values: CreditValues) -> Result<ProviderFetchResult, Provi
         cost = cost.with_limit(values.funded_total);
     }
 
-    Ok(ProviderFetchResult::new(usage, "browser-cdp").with_cost(cost))
+    Ok(ProviderFetchResult::new(usage, "web").with_cost(cost))
 }
 
 #[async_trait]
@@ -201,7 +197,16 @@ impl Provider for BaiProvider {
         if !matches!(ctx.source_mode, SourceMode::Auto | SourceMode::Web) {
             return Err(ProviderError::UnsupportedSource(ctx.source_mode));
         }
-        let values = cdp::fetch_credit_values(ctx.web_timeout).await?;
+        let cookie_header = if let Some(cookie_header) = ctx
+            .manual_cookie_header
+            .as_deref()
+            .filter(|cookie| !cookie.trim().is_empty())
+        {
+            cookie_header.to_string()
+        } else {
+            crate::providers::browser_cookie_header(&["chat.b.ai"])?
+        };
+        let values = web::fetch_from_browser_session(&cookie_header, ctx.web_timeout).await?;
         result_from_values(values)
     }
 
@@ -312,6 +317,7 @@ mod tests {
             provider.available_sources(),
             vec![SourceMode::Auto, SourceMode::Web]
         );
+        assert_eq!(ProviderId::Bai.cookie_domain(), Some("chat.b.ai"));
     }
 
     #[test]
