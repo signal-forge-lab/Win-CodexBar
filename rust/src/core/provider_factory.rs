@@ -7,20 +7,21 @@
 
 use super::{Provider, ProviderId};
 use crate::providers::{
-    AbacusProvider, AiAndProvider, AiHubMixProvider, AlibabaProvider, AlibabaTokenPlanProvider, AmpProvider,
-    AntigravityProvider, AugmentProvider, AzureOpenAIProvider, BedrockProvider, ChutesProvider,
-    ClaudeProvider, ClinePassProvider, CodeBuddyProvider, CodebuffProvider, CodexProvider,
-    CommandCodeProvider, CopilotProvider, CrofProvider, CrossModelProvider, CursorProvider,
-    DeepInfraProvider, DeepSeekProvider, DeepgramProvider, DevinProvider, DoubaoProvider,
-    ElevenLabsProvider, FactoryProvider, FireworksProvider, GeminiApiProvider, GeminiAppsProvider,
-    GeminiProvider, GrokProvider, GroqProvider, InfiniProvider, JetBrainsProvider, KiloProvider,
-    KimiK2Provider, KimiProvider, KiroProvider, LLMProxyProvider, LiteLLMProvider, LongCatProvider,
-    ManusProvider, MetaProvider, MiMoProvider, MiniMaxProvider, MistralProvider, NanoGPTProvider,
-    NeuralwattProvider, NotionProvider, OllamaProvider, OpenAIApiProvider, OpenCodeGoProvider,
-    OpenCodeProvider, OpenRouterProvider, OrcaRouterProvider, PerplexityProvider, PoeProvider,
-    QoderProvider, QwenCloudProvider, SakanaProvider, StepFunProvider, Sub2ApiProvider,
-    T3ChatProvider, VeniceProvider, VertexAIProvider, WarpProvider, WayfinderProvider,
-    WindsurfProvider, XaiProvider, ZaiProvider, ZedProvider, ZenMuxProvider, ZoomMateProvider,
+    AbacusProvider, AiAndProvider, AiHubMixProvider, AlibabaProvider, AlibabaTokenPlanProvider,
+    AmpProvider, AntigravityProvider, AugmentProvider, AzureOpenAIProvider, BedrockProvider,
+    ChutesProvider, ClaudeProvider, ClinePassProvider, CodeBuddyProvider, CodebuffProvider,
+    CodexProvider, CommandCodeProvider, CopilotProvider, CrofProvider, CrossModelProvider,
+    CursorProvider, DeepInfraProvider, DeepSeekProvider, DeepgramProvider, DevinProvider,
+    DoubaoProvider, ElevenLabsProvider, FactoryProvider, FireworksProvider, GeminiApiProvider,
+    GeminiAppsProvider, GeminiProvider, GrokProvider, GroqProvider, InfiniProvider,
+    JetBrainsProvider, KiloProvider, KimiK2Provider, KimiProvider, KiroProvider, LLMProxyProvider,
+    LiteLLMProvider, LongCatProvider, ManusProvider, MetaProvider, MiMoProvider, MiniMaxProvider,
+    MistralProvider, NanoGPTProvider, NeuralwattProvider, NotionProvider, OllamaProvider,
+    OpenAIApiProvider, OpenCodeGoProvider, OpenCodeProvider, OpenRouterProvider,
+    OrcaRouterProvider, PerplexityProvider, PoeProvider, QoderProvider, QwenCloudProvider,
+    SakanaProvider, StepFunProvider, Sub2ApiProvider, T3ChatProvider, VeniceProvider,
+    VertexAIProvider, WarpProvider, WayfinderProvider, WindsurfProvider, XaiProvider, ZaiProvider,
+    ZedProvider, ZenMuxProvider, ZoomMateProvider,
 };
 
 /// Instantiate the concrete [`Provider`] implementation for a given [`ProviderId`].
