@@ -1,11 +1,17 @@
 //! b.ai funded-credit usage from the user's existing browser session.
 //!
-//! Authentication follows the same browser-cookie import path as the other
-//! Web providers. CodexBar never reads or stores b.ai's API access token.
+//! Automatic mode uses the existing CodexBar Browser Bridge. The bridge runs
+//! inside the signed-in chat.b.ai page and persists only sanitized numeric
+//! usage/funding totals. Cookies, account tokens, identity, and raw order
+//! records never cross the browser boundary. Manual/Web mode retains the
+//! direct cookie-authenticated API path as an explicit fallback.
 
 mod web;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
+use std::{fs, path::PathBuf};
 
 use crate::core::{
     CostSnapshot, FetchContext, Provider, ProviderError, ProviderFetchResult, ProviderId,
@@ -13,6 +19,30 @@ use crate::core::{
 };
 
 const DASHBOARD_URL: &str = "https://chat.b.ai/usage";
+const BROWSER_CACHE_FILENAME: &str = "bai-usage-browser.json";
+const BROWSER_CACHE_MAX_AGE_SECONDS: i64 = 15 * 60;
+const CLOCK_SKEW_SECONDS: i64 = 60;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BaiBrowserCache {
+    version: u32,
+    provider: String,
+    observed_at: i64,
+    payload: BaiBrowserPayload,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BaiBrowserPayload {
+    balance: f64,
+    bonus_remaining: f64,
+    monthly_spent: f64,
+    purchased_total: f64,
+    bonus_total: f64,
+    funded_total: f64,
+    source: String,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct CreditValues {
@@ -102,7 +132,75 @@ fn validate(values: CreditValues) -> Result<CreditValues, ProviderError> {
     Ok(values)
 }
 
-fn result_from_values(values: CreditValues) -> Result<ProviderFetchResult, ProviderError> {
+fn browser_cache_path() -> Result<PathBuf, ProviderError> {
+    dirs::data_local_dir()
+        .map(|root| root.join("CodexBar").join(BROWSER_CACHE_FILENAME))
+        .ok_or_else(|| {
+            ProviderError::NotInstalled(
+                "Could not locate LOCALAPPDATA for b.ai Browser Bridge cache.".into(),
+            )
+        })
+}
+
+fn values_from_browser_cache_raw(
+    raw: &str,
+    now: DateTime<Utc>,
+) -> Result<Option<CreditValues>, ProviderError> {
+    let cache: BaiBrowserCache = serde_json::from_str(raw).map_err(|error| {
+        ProviderError::Parse(format!("Invalid b.ai Browser Bridge cache: {error}"))
+    })?;
+    if cache.version != 1 || cache.provider != "bai" {
+        return Err(ProviderError::Parse(
+            "Unsupported b.ai Browser Bridge cache version/provider".into(),
+        ));
+    }
+    let observed_at = DateTime::<Utc>::from_timestamp(cache.observed_at, 0).ok_or_else(|| {
+        ProviderError::Parse("Invalid b.ai Browser Bridge observation timestamp".into())
+    })?;
+    let age = (now - observed_at).num_seconds();
+    if age < -CLOCK_SKEW_SECONDS {
+        return Err(ProviderError::Other(
+            "b.ai Browser Bridge snapshot is from the future; check the system clock.".into(),
+        ));
+    }
+    if age > BROWSER_CACHE_MAX_AGE_SECONDS {
+        return Ok(None);
+    }
+    if cache.payload.source != "network" {
+        return Err(ProviderError::Parse(
+            "Unknown b.ai Browser Bridge parser source".into(),
+        ));
+    }
+    let values = CreditValues {
+        balance: cache.payload.balance,
+        bonus_remaining: cache.payload.bonus_remaining,
+        monthly_spent: cache.payload.monthly_spent,
+        purchased_total: cache.payload.purchased_total,
+        bonus_total: cache.payload.bonus_total,
+        funded_total: cache.payload.funded_total,
+    };
+    validate(values).map(Some)
+}
+
+fn read_browser_cache(now: DateTime<Utc>) -> Result<Option<CreditValues>, ProviderError> {
+    let path = browser_cache_path()?;
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(ProviderError::Other(format!(
+                "Failed to read b.ai Browser Bridge cache {}: {error}",
+                path.display()
+            )));
+        }
+    };
+    values_from_browser_cache_raw(&raw, now)
+}
+
+fn result_from_values(
+    values: CreditValues,
+    source: &'static str,
+) -> Result<ProviderFetchResult, ProviderError> {
     let values = validate(values)?;
     let purchased_remaining = (values.balance - values.bonus_remaining).max(0.0);
     let primary =
@@ -180,7 +278,7 @@ fn result_from_values(values: CreditValues) -> Result<ProviderFetchResult, Provi
         cost = cost.with_limit(values.funded_total);
     }
 
-    Ok(ProviderFetchResult::new(usage, "web").with_cost(cost))
+    Ok(ProviderFetchResult::new(usage, source).with_cost(cost))
 }
 
 #[async_trait]
@@ -197,17 +295,30 @@ impl Provider for BaiProvider {
         if !matches!(ctx.source_mode, SourceMode::Auto | SourceMode::Web) {
             return Err(ProviderError::UnsupportedSource(ctx.source_mode));
         }
-        let cookie_header = if let Some(cookie_header) = ctx
+        let manual_cookie = ctx
             .manual_cookie_header
             .as_deref()
-            .filter(|cookie| !cookie.trim().is_empty())
-        {
-            cookie_header.to_string()
-        } else {
-            crate::providers::browser_cookie_header(&["chat.b.ai"])?
-        };
+            .filter(|cookie| !cookie.trim().is_empty());
+
+        if let Some(cookie_header) = manual_cookie {
+            let values = web::fetch_from_browser_session(cookie_header, ctx.web_timeout).await?;
+            return result_from_values(values, "web-manual");
+        }
+
+        if ctx.source_mode == SourceMode::Auto {
+            match read_browser_cache(Utc::now()) {
+                Ok(Some(values)) => return result_from_values(values, "browser-bridge"),
+                Ok(None) => {}
+                Err(error) => tracing::debug!(
+                    %error,
+                    "b.ai Browser Bridge cache unavailable; trying direct browser cookies"
+                ),
+            }
+        }
+
+        let cookie_header = crate::providers::browser_cookie_header(&["chat.b.ai"])?;
         let values = web::fetch_from_browser_session(&cookie_header, ctx.web_timeout).await?;
-        result_from_values(values)
+        result_from_values(values, "web")
     }
 
     fn available_sources(&self) -> Vec<SourceMode> {
@@ -215,6 +326,10 @@ impl Provider for BaiProvider {
     }
 
     fn supports_web(&self) -> bool {
+        true
+    }
+
+    fn owns_browser_cookie_resolution(&self) -> bool {
         true
     }
 }
@@ -236,7 +351,7 @@ mod tests {
 
     #[test]
     fn purchased_credit_usage_drives_floatbar_percentage() {
-        let initial = result_from_values(current_values()).unwrap();
+        let initial = result_from_values(current_values(), "test").unwrap();
         assert_eq!(initial.usage.primary.used_percent, 0.0);
         assert_eq!(initial.cost.as_ref().unwrap().limit, Some(15_000_000.0));
         assert_eq!(initial.cost.as_ref().unwrap().balance, Some(15_000_000.0));
@@ -245,7 +360,7 @@ mod tests {
         later.balance = 8_000_000.0;
         later.bonus_remaining = 0.0;
         later.monthly_spent = 7_000_000.0;
-        let result = result_from_values(later).unwrap();
+        let result = result_from_values(later, "test").unwrap();
         assert!((result.usage.primary.used_percent - 20.0).abs() < 1e-9);
         assert_eq!(result.cost.as_ref().unwrap().used, 7_000_000.0);
         assert!(
@@ -258,7 +373,7 @@ mod tests {
 
     #[test]
     fn funding_breakdown_and_monthly_usage_stay_informational() {
-        let result = result_from_values(current_values()).unwrap();
+        let result = result_from_values(current_values(), "test").unwrap();
         let funding = result
             .usage
             .extra_rate_windows
@@ -286,7 +401,7 @@ mod tests {
         values.balance = 12_000_000.0;
         values.bonus_remaining = 2_000_000.0;
         values.monthly_spent = 3_000_000.0;
-        let result = result_from_values(values).unwrap();
+        let result = result_from_values(values, "test").unwrap();
         assert_eq!(result.usage.primary.used_percent, 0.0);
         assert!((result.usage.secondary.as_ref().unwrap().used_percent - 20.0).abs() < 1e-9);
     }
@@ -295,13 +410,13 @@ mod tests {
     fn invalid_or_incomplete_funding_fails_closed_to_balance_only() {
         let mut values = current_values();
         values.funded_total = 14_000_000.0;
-        assert!(result_from_values(values).is_err());
+        assert!(result_from_values(values, "test").is_err());
 
         let mut no_history = current_values();
         no_history.purchased_total = 0.0;
         no_history.bonus_total = 0.0;
         no_history.funded_total = 0.0;
-        let result = result_from_values(no_history).unwrap();
+        let result = result_from_values(no_history, "test").unwrap();
         assert!(result.usage.primary.is_informational);
         assert_eq!(result.cost.as_ref().unwrap().limit, None);
     }
@@ -325,5 +440,75 @@ mod tests {
         assert_eq!(format_points(15_000_000.0), "15M");
         assert_eq!(format_points(1_250_000.0), "1.25M");
         assert_eq!(format_points(25_000.0), "25K");
+    }
+
+    #[test]
+    fn fresh_browser_bridge_cache_restores_sanitized_values() {
+        let now = DateTime::parse_from_rfc3339("2026-09-20T06:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let raw = r#"{
+            "version":1,
+            "provider":"bai",
+            "observed_at":1789885500,
+            "payload":{
+                "balance":15000000,
+                "bonus_remaining":5000000,
+                "monthly_spent":0,
+                "purchased_total":10000000,
+                "bonus_total":5000000,
+                "funded_total":15000000,
+                "source":"network"
+            }
+        }"#;
+        assert_eq!(
+            values_from_browser_cache_raw(raw, now).unwrap(),
+            Some(current_values())
+        );
+    }
+
+    #[test]
+    fn stale_browser_bridge_cache_is_ignored() {
+        let now = DateTime::parse_from_rfc3339("2026-09-20T07:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let raw = r#"{
+            "version":1,
+            "provider":"bai",
+            "observed_at":1789885500,
+            "payload":{
+                "balance":15000000,
+                "bonus_remaining":5000000,
+                "monthly_spent":0,
+                "purchased_total":10000000,
+                "bonus_total":5000000,
+                "funded_total":15000000,
+                "source":"network"
+            }
+        }"#;
+        assert_eq!(values_from_browser_cache_raw(raw, now).unwrap(), None);
+    }
+
+    #[test]
+    fn browser_bridge_cache_rejects_secret_or_unknown_fields() {
+        let now = DateTime::parse_from_rfc3339("2026-09-20T06:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let raw = r#"{
+            "version":1,
+            "provider":"bai",
+            "observed_at":1789885500,
+            "payload":{
+                "balance":15000000,
+                "bonus_remaining":5000000,
+                "monthly_spent":0,
+                "purchased_total":10000000,
+                "bonus_total":5000000,
+                "funded_total":15000000,
+                "source":"network",
+                "cookie":"must-not-cross-boundary"
+            }
+        }"#;
+        assert!(values_from_browser_cache_raw(raw, now).is_err());
     }
 }

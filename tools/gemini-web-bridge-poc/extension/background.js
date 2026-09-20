@@ -2,12 +2,15 @@ const HOST_NAME = 'com.codexbar.gemini_web_bridge_poc';
 const QUOTA_MESSAGE = 'codexbar:gemini-apps-poc:quota';
 const SPEND_MESSAGE = 'codexbar:gemini-api-spend:summary';
 const AIHUBMIX_RECHARGE_MESSAGE = 'codexbar:aihubmix:recharge';
+const BAI_USAGE_MESSAGE = 'codexbar:bai:usage';
 const REFRESH_MESSAGE = 'codexbar:gemini-apps-poc:refresh';
 const SPEND_REFRESH_MESSAGE = 'codexbar:gemini-api-spend:refresh';
 const AIHUBMIX_REFRESH_MESSAGE = 'codexbar:aihubmix:recharge:refresh';
+const BAI_REFRESH_MESSAGE = 'codexbar:bai:usage:refresh';
 const CACHE_KEY = 'codexbarGeminiAppsPocLastPush';
 const SPEND_CACHE_KEY = 'codexbarGeminiApiSpendLastPush';
 const AIHUBMIX_CACHE_KEY = 'codexbarAiHubMixRechargeLastPush';
+const BAI_CACHE_KEY = 'codexbarBaiUsageLastPush';
 const REFRESH_ALARM = 'codexbar-gemini-apps-poc-refresh';
 const REFRESH_INTERVAL_MINUTES = 3;
 
@@ -106,6 +109,37 @@ function validAiHubMixMessage(message, sender) {
     && Number.isInteger(message.observed_at)
     && message.observed_at > 0
     && validAiHubMixPayload(message.payload);
+}
+
+function validBaiPayload(payload) {
+  return payload
+    && ['balance', 'bonus_remaining', 'monthly_spent', 'purchased_total',
+      'bonus_total', 'funded_total'].every((key) =>
+      Number.isFinite(payload[key]) && payload[key] >= 0)
+    && payload.bonus_remaining <= payload.balance
+    && Math.abs(payload.funded_total
+      - payload.purchased_total - payload.bonus_total) <= 0.5
+    && payload.source === 'network'
+    && Object.keys(payload).every((key) =>
+      ['balance', 'bonus_remaining', 'monthly_spent', 'purchased_total',
+        'bonus_total', 'funded_total', 'source'].includes(key));
+}
+
+function validBaiMessage(message, sender) {
+  let url;
+  try {
+    url = new URL(sender?.url || '');
+  } catch (_) {
+    return false;
+  }
+  return message?.type === BAI_USAGE_MESSAGE
+    && message.version === 1
+    && message.provider === 'bai'
+    && sender?.frameId === 0
+    && url.origin === 'https://chat.b.ai'
+    && Number.isInteger(message.observed_at)
+    && message.observed_at > 0
+    && validBaiPayload(message.payload);
 }
 
 function connectNative() {
@@ -207,11 +241,22 @@ function refreshAiHubMixTab(tab) {
   });
 }
 
+function refreshBaiTab(tab) {
+  if (tab?.id == null) return;
+  chrome.tabs.sendMessage(tab.id, { type: BAI_REFRESH_MESSAGE }, () => {
+    void chrome.runtime.lastError;
+  });
+}
+
 function refreshOpenBridgeTabs() {
   refreshOpenGeminiTabs();
   chrome.tabs.query({ url: ['https://console.aihubmix.com/topup*'] }, (tabs) => {
     if (chrome.runtime.lastError) return;
     for (const tab of tabs || []) refreshAiHubMixTab(tab);
+  });
+  chrome.tabs.query({ url: ['https://chat.b.ai/*'] }, (tabs) => {
+    if (chrome.runtime.lastError) return;
+    for (const tab of tabs || []) refreshBaiTab(tab);
   });
 }
 
@@ -236,6 +281,8 @@ chrome.runtime.onMessage.addListener((message, sender) => {
       ? SPEND_CACHE_KEY
       : validAiHubMixMessage(message, sender)
         ? AIHUBMIX_CACHE_KEY
+      : validBaiMessage(message, sender)
+        ? BAI_CACHE_KEY
       : null;
   if (!cacheKey) return;
   chrome.storage.local.set({ [cacheKey]: message }, () => void chrome.runtime.lastError);
@@ -244,10 +291,16 @@ chrome.runtime.onMessage.addListener((message, sender) => {
 
 chrome.action.onClicked.addListener(() => {
   connectNative();
-  void chrome.storage.local.get([CACHE_KEY, SPEND_CACHE_KEY, AIHUBMIX_CACHE_KEY]).then(async (stored) => {
+  void chrome.storage.local.get([
+    CACHE_KEY,
+    SPEND_CACHE_KEY,
+    AIHUBMIX_CACHE_KEY,
+    BAI_CACHE_KEY
+  ]).then(async (stored) => {
     if (stored[CACHE_KEY]) await forward(stored[CACHE_KEY]);
     if (stored[SPEND_CACHE_KEY]) await forward(stored[SPEND_CACHE_KEY]);
     if (stored[AIHUBMIX_CACHE_KEY]) await forward(stored[AIHUBMIX_CACHE_KEY]);
+    if (stored[BAI_CACHE_KEY]) await forward(stored[BAI_CACHE_KEY]);
     refreshOpenBridgeTabs();
   });
 });
@@ -273,6 +326,8 @@ chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
     refreshGeminiTab(tab);
   } else if (url.startsWith('https://console.aihubmix.com/topup')) {
     refreshAiHubMixTab(tab);
+  } else if (url.startsWith('https://chat.b.ai/')) {
+    refreshBaiTab(tab);
   }
 });
 

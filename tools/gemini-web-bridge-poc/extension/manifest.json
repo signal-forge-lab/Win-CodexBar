@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "CodexBar Browser Bridge",
-  "version": "0.2.6",
-  "description": "Sends sanitized Gemini quota, Gemini API spend, and AIHubMix recharge summaries to the local CodexBar native host.",
+  "version": "0.2.7",
+  "description": "Sends sanitized Gemini quota, Gemini API spend, AIHubMix recharge, and b.ai usage summaries to the local CodexBar native host.",
   "permissions": ["alarms", "idle", "storage", "nativeMessaging", "scripting"],
-  "host_permissions": ["https://gemini.google.com/*", "https://aistudio.google.com/spend*", "https://console.aihubmix.com/topup*"],
+  "host_permissions": ["https://gemini.google.com/*", "https://aistudio.google.com/spend*", "https://console.aihubmix.com/topup*", "https://chat.b.ai/*"],
   "action": {
     "default_title": "Connect CodexBar Gemini Apps"
   },
@@ -37,6 +37,17 @@
     {
       "matches": ["https://console.aihubmix.com/topup*"],
       "js": ["aihubmix-parser.js", "aihubmix-content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://chat.b.ai/*"],
+      "js": ["bai-parser.js", "bai-interceptor.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://chat.b.ai/*"],
+      "js": ["bai-content.js"],
       "run_at": "document_idle"
     }
   ]

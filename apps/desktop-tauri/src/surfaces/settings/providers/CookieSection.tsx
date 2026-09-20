@@ -16,6 +16,7 @@ import type {
 interface Props {
   providerId: string;
   cookieDomain: string | null;
+  allowBrowserImport?: boolean;
 }
 
 function cookiePlaceholder(
@@ -35,7 +36,11 @@ function cookiePlaceholder(
  * Per-provider browser cookie management. Renders nothing for providers
  * that do not have a cookieDomain (i.e. don't authenticate via web cookies).
  */
-export function CookieSection({ providerId, cookieDomain }: Props) {
+export function CookieSection({
+  providerId,
+  cookieDomain,
+  allowBrowserImport = true,
+}: Props) {
   const { t } = useLocale();
   const [saved, setSaved] = useState<CookieInfoBridge | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -77,7 +82,12 @@ export function CookieSection({ providerId, cookieDomain }: Props) {
   }, [reload, cookieDomain]);
 
   useEffect(() => {
-    if (cookieDomain === null) return;
+    if (cookieDomain === null || !allowBrowserImport) {
+      setBrowsers([]);
+      setBrowsersLoaded(true);
+      setBrowserType("");
+      return;
+    }
     listDetectedBrowsers()
       .then((list) => {
         setBrowsers(list);
@@ -87,7 +97,7 @@ export function CookieSection({ providerId, cookieDomain }: Props) {
       .catch(() => {
         setBrowsersLoaded(true);
       });
-  }, [cookieDomain]);
+  }, [cookieDomain, allowBrowserImport]);
 
   if (cookieDomain === null) return null;
   if (!loaded) return null;
@@ -173,7 +183,7 @@ export function CookieSection({ providerId, cookieDomain }: Props) {
         <p className="credential-empty">{t("BrowserCookieNoneSaved")}</p>
       )}
 
-      {browsersLoaded && browsers.length > 0 && (
+      {allowBrowserImport && browsersLoaded && browsers.length > 0 && (
         <>
           {importError && (
             <div className="settings-status settings-status--error">

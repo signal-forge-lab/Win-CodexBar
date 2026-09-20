@@ -367,7 +367,12 @@ export function ProviderDetailPane({
       <CookieSection
         key={`cookie-${credKey}`}
         providerId={detail.id}
-        cookieDomain={cookieDomain}
+        cookieDomain={
+          detail.id === "bai" && detail.cookieSource !== "manual"
+            ? null
+            : cookieDomain
+        }
+        allowBrowserImport={detail.id !== "bai"}
       />
       <ChartsSection
         providerId={detail.id}

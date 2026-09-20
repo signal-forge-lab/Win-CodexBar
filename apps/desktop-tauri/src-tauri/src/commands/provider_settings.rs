@@ -364,7 +364,7 @@ mod tests {
             options[0]
                 .description
                 .as_deref()
-                .is_some_and(|text| text.contains("chat.b.ai browser session"))
+                .is_some_and(|text| text.contains("Browser Bridge"))
         );
     }
 
@@ -735,7 +735,7 @@ pub fn cookie_source_options_for(provider_id: &str, lang: Language) -> Vec<Cooki
             cookie_option(
                 lang,
                 "auto",
-                "Automatically imports the signed-in chat.b.ai browser session.",
+                "Uses the CodexBar Browser Bridge in the signed-in chat.b.ai page. Cookies and account tokens stay inside the browser.",
                 "",
                 None,
             ),

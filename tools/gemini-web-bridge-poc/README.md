@@ -1,10 +1,12 @@
 # CodexBar Browser Bridge
 
 This bridge reads `gemini.google.com/usage`, the signed-in AI Studio `/spend`
-page, and AIHubMix's signed-in `/topup` Transactions page without exporting
-cookies, authorization headers, Clerk JWTs, or page tokens from the browser.
+page, AIHubMix's signed-in `/topup` Transactions page, and signed-in
+`chat.b.ai` usage/funding data without exporting cookies, authorization
+headers, Clerk JWTs, account tokens, raw order records, or page tokens from
+the browser.
 It started as an isolated Gemini PoC and is now consumed by `geminiapps`,
-`gemini-api`, and `aihubmix`. The extension is shown as **CodexBar Browser
+`gemini-api`, `aihubmix`, and `bai`. The extension is shown as **CodexBar Browser
 Bridge** in Chromium extension managers.
 
 The existing `gemini` provider remains separate and continues to report Gemini CLI / Code Assist quota.
@@ -34,6 +36,14 @@ AIHubMix Topup / Transactions page
   -> codexbar-gemini-web-bridge-poc.exe
   -> %LOCALAPPDATA%\CodexBar\aihubmix-recharge-browser.json
   -> AiHubMixProvider (`aihubmix`) + live Manage-Key current balance
+
+b.ai page
+  -> same-origin signed-in tRPC usage/funding responses
+  -> sanitized balance / bonus / monthly spend / purchased + bonus totals only
+  -> Chrome Native Messaging
+  -> codexbar-gemini-web-bridge-poc.exe
+  -> %LOCALAPPDATA%\CodexBar\bai-usage-browser.json
+  -> BaiProvider (`bai`)
 ```
 
 The cache may contain only:
@@ -58,6 +68,12 @@ The AIHubMix recharge cache contains only the latest funded balance in USD,
 an optional funding timestamp, parser source, and observation time. The bridge
 does not export the Clerk JWT, Manage Key, access token, cookie header, email,
 raw Transactions response, or individual transaction records.
+
+The b.ai cache contains only total point balance, bonus balance, current-month
+spend, purchased-point total, bonus-point total, funded total, observation
+time, and parser source. It never contains Cookie headers, session tokens,
+account/API access tokens, email or other identity fields, or raw order
+records.
 
 ## Build the native host
 

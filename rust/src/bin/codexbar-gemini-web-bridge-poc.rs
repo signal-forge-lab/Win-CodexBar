@@ -75,12 +75,34 @@ struct AiHubMixRechargePayload {
     source: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct BaiUsagePush {
+    version: u32,
+    provider: String,
+    observed_at: i64,
+    payload: BaiUsagePayload,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct BaiUsagePayload {
+    balance: f64,
+    bonus_remaining: f64,
+    monthly_spent: f64,
+    purchased_total: f64,
+    bonus_total: f64,
+    funded_total: f64,
+    source: String,
+}
+
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(untagged)]
 enum BrowserPush {
     GeminiApps(GeminiAppsPush),
     GeminiApi(GeminiApiSpendPush),
     AiHubMix(AiHubMixRechargePush),
+    Bai(BaiUsagePush),
 }
 
 impl BrowserPush {
@@ -89,6 +111,7 @@ impl BrowserPush {
             Self::GeminiApps(push) => &push.provider,
             Self::GeminiApi(push) => &push.provider,
             Self::AiHubMix(push) => &push.provider,
+            Self::Bai(push) => &push.provider,
         }
     }
 
@@ -97,6 +120,7 @@ impl BrowserPush {
             Self::GeminiApps(push) => push.observed_at,
             Self::GeminiApi(push) => push.observed_at,
             Self::AiHubMix(push) => push.observed_at,
+            Self::Bai(push) => push.observed_at,
         }
     }
 }
@@ -157,6 +181,7 @@ fn cache_path(provider: &str) -> Result<PathBuf, String> {
         "gemini-apps" => "gemini-apps-browser.json",
         "gemini-api" => "gemini-api-spend-browser.json",
         "aihubmix" => "aihubmix-recharge-browser.json",
+        "bai" => "bai-usage-browser.json",
         other => return Err(format!("unsupported provider: {other}")),
     };
     dirs::data_local_dir()
@@ -241,6 +266,12 @@ fn parse_push(body: &[u8]) -> Result<BrowserPush, String> {
                 .map_err(|error| format!("invalid AIHubMix browser message: {error}"))?;
             validate_aihubmix_push(&push)?;
             Ok(BrowserPush::AiHubMix(push))
+        }
+        Some("bai") => {
+            let push: BaiUsagePush = serde_json::from_value(value)
+                .map_err(|error| format!("invalid b.ai browser message: {error}"))?;
+            validate_bai_push(&push)?;
+            Ok(BrowserPush::Bai(push))
         }
         Some(provider) => Err(format!("unsupported provider: {provider}")),
         None => Err("browser message is missing provider".to_string()),
@@ -339,6 +370,38 @@ fn validate_aihubmix_push(push: &AiHubMixRechargePush) -> Result<(), String> {
     }
     if !matches!(payload.source.as_str(), "network" | "dom") {
         return Err("unsupported AIHubMix parser source".to_string());
+    }
+    Ok(())
+}
+
+fn validate_bai_push(push: &BaiUsagePush) -> Result<(), String> {
+    if push.version != 1 || push.provider != "bai" {
+        return Err("unsupported b.ai message version/provider".to_string());
+    }
+    if push.observed_at <= 0 {
+        return Err("observed_at must be a positive Unix timestamp".to_string());
+    }
+    let payload = &push.payload;
+    for (label, value) in [
+        ("balance", payload.balance),
+        ("bonus_remaining", payload.bonus_remaining),
+        ("monthly_spent", payload.monthly_spent),
+        ("purchased_total", payload.purchased_total),
+        ("bonus_total", payload.bonus_total),
+        ("funded_total", payload.funded_total),
+    ] {
+        if !value.is_finite() || value < 0.0 {
+            return Err(format!("{label} must be a finite non-negative amount"));
+        }
+    }
+    if payload.bonus_remaining > payload.balance + 1e-9 {
+        return Err("bonus_remaining must not exceed balance".to_string());
+    }
+    if (payload.funded_total - payload.purchased_total - payload.bonus_total).abs() > 0.5 {
+        return Err("funded_total must equal purchased_total + bonus_total".to_string());
+    }
+    if payload.source != "network" {
+        return Err("unsupported b.ai parser source".to_string());
     }
     Ok(())
 }
@@ -479,6 +542,24 @@ mod tests {
         .unwrap()
     }
 
+    fn valid_bai_json() -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "provider": "bai",
+            "observed_at": 1_789_885_500,
+            "payload": {
+                "balance": 15_000_000.0,
+                "bonus_remaining": 5_000_000.0,
+                "monthly_spent": 0.0,
+                "purchased_total": 10_000_000.0,
+                "bonus_total": 5_000_000.0,
+                "funded_total": 15_000_000.0,
+                "source": "network"
+            }
+        }))
+        .unwrap()
+    }
+
     #[test]
     fn accepts_only_the_secret_free_wire_contract() {
         let push = parse_push(&valid_json()).unwrap();
@@ -514,6 +595,19 @@ mod tests {
     }
 
     #[test]
+    fn accepts_sanitized_bai_usage_contract() {
+        let push = parse_push(&valid_bai_json()).unwrap();
+        let BrowserPush::Bai(push) = push else {
+            panic!("wrong provider")
+        };
+        assert_eq!(push.payload.balance, 15_000_000.0);
+        assert_eq!(push.payload.bonus_remaining, 5_000_000.0);
+        assert_eq!(push.payload.purchased_total, 10_000_000.0);
+        assert_eq!(push.payload.funded_total, 15_000_000.0);
+        assert_eq!(push.payload.source, "network");
+    }
+
+    #[test]
     fn unknown_token_or_cookie_fields_are_rejected() {
         let mut value: Value = serde_json::from_slice(&valid_json()).unwrap();
         value["payload"]["token"] = Value::String("must-not-cross-boundary".to_string());
@@ -533,6 +627,33 @@ mod tests {
             value["payload"][field] = Value::String("must-not-cross-boundary".to_string());
             assert!(parse_push(&serde_json::to_vec(&value).unwrap()).is_err());
         }
+
+        for field in [
+            "access_token",
+            "authorization",
+            "cookie",
+            "records",
+            "email",
+        ] {
+            let mut value: Value = serde_json::from_slice(&valid_bai_json()).unwrap();
+            value["payload"][field] = Value::String("must-not-cross-boundary".to_string());
+            assert!(parse_push(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
+    }
+
+    #[test]
+    fn bai_snapshot_rejects_inconsistent_or_unknown_usage() {
+        let mut value: Value = serde_json::from_slice(&valid_bai_json()).unwrap();
+        value["payload"]["bonus_remaining"] = serde_json::json!(20_000_000.0);
+        assert!(parse_push(&serde_json::to_vec(&value).unwrap()).is_err());
+
+        let mut value: Value = serde_json::from_slice(&valid_bai_json()).unwrap();
+        value["payload"]["funded_total"] = serde_json::json!(14_000_000.0);
+        assert!(parse_push(&serde_json::to_vec(&value).unwrap()).is_err());
+
+        let mut value: Value = serde_json::from_slice(&valid_bai_json()).unwrap();
+        value["payload"]["source"] = serde_json::json!("dom");
+        assert!(parse_push(&serde_json::to_vec(&value).unwrap()).is_err());
     }
 
     #[test]

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const parser = require('../extension/gemini-parser.js');
 const spendParser = require('../extension/aistudio-parser.js');
 const aiHubMixParser = require('../extension/aihubmix-parser.js');
+const baiParser = require('../extension/bai-parser.js');
 
 test('parses AI Quota Deck style jSf9Qc current and weekly windows', () => {
   const inner = [
@@ -226,4 +227,58 @@ test('AIHubMix parser fails closed on malformed or non-funding history', () => {
     data: [{ grant_type: 4, status: 1, quota: -500000, balance_after: 1000000, created_time: 1 }]
   }), null);
   assert.equal(aiHubMixParser.latestFundingFromRows([['Deduct', 'Available', '-$1', '$9']]), null);
+});
+
+test('b.ai parser produces a sanitized funded-credit snapshot', () => {
+  const points = baiParser.parsePoints([{
+    result: { data: { json: { points_balance: 15_000_000, points_expiring: 5_000_000 } } }
+  }]);
+  const summary = baiParser.parseSummary([{
+    result: { data: { json: { monthly_spent: 0 } } }
+  }]);
+  const orders = baiParser.parseOrders([{
+    result: {
+      data: {
+        json: {
+          data: [
+            { status: 'success', type: 'purchase', rechargeType: 'fiat', recipientRelation: 'self', points: 10_000_000 },
+            { status: 'success', type: 'bonus', rechargeType: 'bonus', points: 5_000_000 }
+          ],
+          total: 2
+        }
+      }
+    }
+  }]);
+  const funding = baiParser.fundingFromOrders(orders.data);
+  assert.deepEqual(baiParser.buildPayload(points, summary, funding), {
+    balance: 15_000_000,
+    bonus_remaining: 5_000_000,
+    monthly_spent: 0,
+    purchased_total: 10_000_000,
+    bonus_total: 5_000_000,
+    funded_total: 15_000_000,
+    source: 'network'
+  });
+});
+
+test('b.ai parser excludes gifted and unsuccessful funding records', () => {
+  assert.deepEqual(baiParser.fundingFromOrders([
+    { status: 'success', type: 'purchase', rechargeType: 'fiat', recipientRelation: 'self', points: 10 },
+    { status: 'success', type: 'purchase', rechargeType: 'fiat', recipientRelation: 'gift', points: 20 },
+    { status: 'failed', type: 'bonus', rechargeType: 'bonus', points: 30 },
+    { status: 'success', rechargeType: 'bonus', points: 5 }
+  ]), {
+    purchased_total: 10,
+    bonus_total: 5,
+    funded_total: 15
+  });
+});
+
+test('b.ai parser fails closed on malformed balances and batch shapes', () => {
+  assert.equal(baiParser.parsePoints([{ result: { data: { json: {
+    points_balance: 1,
+    points_expiring: 2
+  } } } }]), null);
+  assert.equal(baiParser.parseSummary([]), null);
+  assert.equal(baiParser.parseOrders([{ result: { data: { json: { data: [], total: -1 } } } }]), null);
 });
