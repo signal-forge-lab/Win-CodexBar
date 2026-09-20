@@ -107,6 +107,17 @@ pub(crate) fn build_fetch_context(
             {
                 (SourceMode::Web, stored_cookie.clone())
             }
+            // Providers that own browser-session resolution (for example b.ai's
+            // Browser Bridge) must receive Auto when the default/manual cookie
+            // slot is empty. Otherwise the shell rewrites Auto -> Cli -> Web and
+            // bypasses the provider-owned cache/fallback policy entirely.
+            "manual"
+                if defer_provider_browser_cookie_lookup
+                    && usage_source == SourceMode::Auto
+                    && !provider_uses_oauth_without_cookies(id, usage_source) =>
+            {
+                (SourceMode::Auto, None)
+            }
             _ if active_token_env.is_some() => (SourceMode::OAuth, None),
             "off" if provider_uses_oauth_without_cookies(id, usage_source) => {
                 (SourceMode::OAuth, None)

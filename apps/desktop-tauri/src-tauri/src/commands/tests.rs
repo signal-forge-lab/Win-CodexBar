@@ -584,6 +584,27 @@ fn fetch_context_manual_cookie_uses_web_without_browser_import() {
 }
 
 #[test]
+fn fetch_context_provider_owned_browser_resolution_preserves_default_auto() {
+    let settings = Settings::default();
+    let cookies = ManualCookies::default();
+    let api_keys = ApiKeys::default();
+    let token_accounts = HashMap::new();
+
+    let ctx = super::build_fetch_context(
+        ProviderId::Bai,
+        &settings,
+        &cookies,
+        &api_keys,
+        &token_accounts,
+    );
+
+    assert_eq!(settings.cookie_source(ProviderId::Bai), "manual");
+    assert_eq!(settings.usage_source(ProviderId::Bai), "auto");
+    assert_eq!(ctx.source_mode, SourceMode::Auto);
+    assert!(ctx.manual_cookie_header.is_none());
+}
+
+#[test]
 fn fetch_context_api_key_provider_uses_auto_without_cookie_import() {
     let settings = Settings::default();
     let cookies = ManualCookies::default();
