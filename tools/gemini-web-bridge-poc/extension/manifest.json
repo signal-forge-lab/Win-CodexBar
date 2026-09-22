@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CodexBar Browser Bridge",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Sends sanitized Gemini quota, Gemini API spend, AIHubMix recharge, and b.ai usage summaries to the local CodexBar native host.",
   "permissions": ["alarms", "idle", "storage", "nativeMessaging", "scripting"],
   "host_permissions": ["https://gemini.google.com/*", "https://aistudio.google.com/spend*", "https://console.aihubmix.com/topup*", "https://chat.b.ai/*"],

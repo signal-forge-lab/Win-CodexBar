@@ -243,8 +243,18 @@ function refreshAiHubMixTab(tab) {
 
 function refreshBaiTab(tab) {
   if (tab?.id == null) return;
-  chrome.tabs.sendMessage(tab.id, { type: BAI_REFRESH_MESSAGE }, () => {
-    void chrome.runtime.lastError;
+  chrome.tabs.update(tab.id, { autoDiscardable: false }, () => {
+    if (chrome.runtime.lastError) return;
+    if (tab.discarded || tab.frozen) {
+      chrome.tabs.reload(tab.id, () => void chrome.runtime.lastError);
+      return;
+    }
+    chrome.tabs.sendMessage(tab.id, { type: BAI_REFRESH_MESSAGE }, () => {
+      const message = chrome.runtime.lastError?.message || '';
+      if (/Receiving end does not exist|Could not establish connection/i.test(message)) {
+        chrome.tabs.reload(tab.id, () => void chrome.runtime.lastError);
+      }
+    });
   });
 }
 
