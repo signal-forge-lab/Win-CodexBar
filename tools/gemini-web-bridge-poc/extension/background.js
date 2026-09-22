@@ -7,14 +7,17 @@ const REFRESH_MESSAGE = 'codexbar:gemini-apps-poc:refresh';
 const SPEND_REFRESH_MESSAGE = 'codexbar:gemini-api-spend:refresh';
 const AIHUBMIX_REFRESH_MESSAGE = 'codexbar:aihubmix:recharge:refresh';
 const BAI_REFRESH_MESSAGE = 'codexbar:bai:usage:refresh';
+const BAI_REFRESH_RESULT_MESSAGE = 'codexbar:bai:usage:refresh-result';
 const CACHE_KEY = 'codexbarGeminiAppsPocLastPush';
 const SPEND_CACHE_KEY = 'codexbarGeminiApiSpendLastPush';
 const AIHUBMIX_CACHE_KEY = 'codexbarAiHubMixRechargeLastPush';
 const BAI_CACHE_KEY = 'codexbarBaiUsageLastPush';
 const REFRESH_ALARM = 'codexbar-gemini-apps-poc-refresh';
 const REFRESH_INTERVAL_MINUTES = 3;
+const BAI_RECOVERY_COOLDOWN_MS = 5 * 60 * 1000;
 
 let nativePort = null;
+const baiRecoveryReloadAt = new Map();
 
 function validWindow(window, label) {
   return window
@@ -241,18 +244,54 @@ function refreshAiHubMixTab(tab) {
   });
 }
 
+function validBaiRefreshResult(message, sender) {
+  let url;
+  try {
+    url = new URL(sender?.url || '');
+  } catch (_) {
+    return false;
+  }
+  return message?.type === BAI_REFRESH_RESULT_MESSAGE
+    && sender?.frameId === 0
+    && sender?.tab?.id != null
+    && url.origin === 'https://chat.b.ai'
+    && typeof message.ok === 'boolean'
+    && (message.reason == null
+      || ['timeout', 'auth', 'rate-limit', 'server', 'fetch', 'parse'].includes(message.reason));
+}
+
+function recoverBaiTab(tabId) {
+  const now = Date.now();
+  const lastReloadAt = baiRecoveryReloadAt.get(tabId) || 0;
+  if (now - lastReloadAt < BAI_RECOVERY_COOLDOWN_MS) return false;
+  baiRecoveryReloadAt.set(tabId, now);
+  chrome.tabs.reload(tabId, () => void chrome.runtime.lastError);
+  return true;
+}
+
+function handleBaiRefreshResult(message, sender) {
+  if (!validBaiRefreshResult(message, sender)) return false;
+  const tabId = sender.tab.id;
+  if (message.ok) {
+    baiRecoveryReloadAt.delete(tabId);
+  } else {
+    recoverBaiTab(tabId);
+  }
+  return true;
+}
+
 function refreshBaiTab(tab) {
   if (tab?.id == null) return;
   chrome.tabs.update(tab.id, { autoDiscardable: false }, () => {
     if (chrome.runtime.lastError) return;
     if (tab.discarded || tab.frozen) {
-      chrome.tabs.reload(tab.id, () => void chrome.runtime.lastError);
+      recoverBaiTab(tab.id);
       return;
     }
     chrome.tabs.sendMessage(tab.id, { type: BAI_REFRESH_MESSAGE }, () => {
       const message = chrome.runtime.lastError?.message || '';
       if (/Receiving end does not exist|Could not establish connection/i.test(message)) {
-        chrome.tabs.reload(tab.id, () => void chrome.runtime.lastError);
+        recoverBaiTab(tab.id);
       }
     });
   });
@@ -285,6 +324,10 @@ async function restoreConnection() {
 }
 
 chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message?.type === BAI_REFRESH_RESULT_MESSAGE) {
+    handleBaiRefreshResult(message, sender);
+    return;
+  }
   const cacheKey = validMessage(message, sender)
     ? CACHE_KEY
     : validSpendMessage(message, sender)
@@ -295,6 +338,9 @@ chrome.runtime.onMessage.addListener((message, sender) => {
         ? BAI_CACHE_KEY
       : null;
   if (!cacheKey) return;
+  if (cacheKey === BAI_CACHE_KEY && sender?.tab?.id != null) {
+    baiRecoveryReloadAt.delete(sender.tab.id);
+  }
   chrome.storage.local.set({ [cacheKey]: message }, () => void chrome.runtime.lastError);
   void forward(message);
 });
