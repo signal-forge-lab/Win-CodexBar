@@ -119,3 +119,44 @@ test('b.ai refresh keeps an awake tab in place', () => {
     ['sendMessage', 29, { type: 'codexbar:bai:usage:refresh' }]
   ]);
 });
+
+test('b.ai refresh failure reloads once until a successful refresh', () => {
+  const { context, calls } = loadBackground();
+  const sender = {
+    frameId: 0,
+    url: 'https://chat.b.ai/usage',
+    tab: { id: 31 }
+  };
+  const failure = {
+    type: 'codexbar:bai:usage:refresh-result',
+    ok: false,
+    reason: 'server'
+  };
+  const success = {
+    type: 'codexbar:bai:usage:refresh-result',
+    ok: true,
+    reason: null
+  };
+
+  assert.equal(context.handleBaiRefreshResult(failure, sender), true);
+  assert.equal(context.handleBaiRefreshResult(failure, sender), true);
+  assert.deepEqual(plain(calls), [['reload', 31]]);
+
+  assert.equal(context.handleBaiRefreshResult(success, sender), true);
+  assert.equal(context.handleBaiRefreshResult(failure, sender), true);
+  assert.deepEqual(plain(calls), [['reload', 31], ['reload', 31]]);
+});
+
+test('b.ai refresh result rejects non-b.ai senders', () => {
+  const { context, calls } = loadBackground();
+  assert.equal(context.handleBaiRefreshResult({
+    type: 'codexbar:bai:usage:refresh-result',
+    ok: false,
+    reason: 'auth'
+  }, {
+    frameId: 0,
+    url: 'https://example.com/',
+    tab: { id: 37 }
+  }), false);
+  assert.deepEqual(plain(calls), []);
+});
