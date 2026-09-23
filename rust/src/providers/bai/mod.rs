@@ -14,14 +14,15 @@ use serde::Deserialize;
 use std::{fs, path::PathBuf};
 
 use crate::core::{
-    CostSnapshot, FetchContext, Provider, ProviderError, ProviderFetchResult, ProviderId,
-    ProviderMetadata, RateWindow, SourceMode, UsageSnapshot,
+    CostSnapshot, FetchContext, LastGoodFailurePolicy, Provider, ProviderError,
+    ProviderFetchResult, ProviderId, ProviderMetadata, RateWindow, SourceMode, UsageSnapshot,
 };
 
 const DASHBOARD_URL: &str = "https://chat.b.ai/usage";
 const BROWSER_CACHE_FILENAME: &str = "bai-usage-browser.json";
 const BROWSER_CACHE_MAX_AGE_SECONDS: i64 = 15 * 60;
 const CLOCK_SKEW_SECONDS: i64 = 60;
+const BROWSER_BRIDGE_UNAVAILABLE_MESSAGE: &str = "b.ai Browser Bridge has no recent snapshot yet. Keep a signed-in b.ai tab open and retry shortly.";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -197,6 +198,10 @@ fn read_browser_cache(now: DateTime<Utc>) -> Result<Option<CreditValues>, Provid
     values_from_browser_cache_raw(&raw, now)
 }
 
+fn browser_bridge_unavailable_error() -> ProviderError {
+    ProviderError::Other(BROWSER_BRIDGE_UNAVAILABLE_MESSAGE.to_string())
+}
+
 fn result_from_values(
     values: CreditValues,
     source: &'static str,
@@ -306,14 +311,9 @@ impl Provider for BaiProvider {
         }
 
         if ctx.source_mode == SourceMode::Auto {
-            match read_browser_cache(Utc::now()) {
-                Ok(Some(values)) => return result_from_values(values, "browser-bridge"),
-                Ok(None) => {}
-                Err(error) => tracing::debug!(
-                    %error,
-                    "b.ai Browser Bridge cache unavailable; trying direct browser cookies"
-                ),
-            }
+            let values =
+                read_browser_cache(Utc::now())?.ok_or_else(browser_bridge_unavailable_error)?;
+            return result_from_values(values, "browser-bridge");
         }
 
         let cookie_header = crate::providers::browser_cookie_header(&["chat.b.ai"])?;
@@ -331,6 +331,17 @@ impl Provider for BaiProvider {
 
     fn owns_browser_cookie_resolution(&self) -> bool {
         true
+    }
+
+    fn last_good_failure_policy_for_error(&self, error: &ProviderError) -> LastGoodFailurePolicy {
+        if matches!(
+            error,
+            ProviderError::Other(message) if message == BROWSER_BRIDGE_UNAVAILABLE_MESSAGE
+        ) {
+            LastGoodFailurePolicy::PreserveOnceThenSurface
+        } else {
+            LastGoodFailurePolicy::Replace
+        }
     }
 }
 
@@ -487,6 +498,21 @@ mod tests {
             }
         }"#;
         assert_eq!(values_from_browser_cache_raw(raw, now).unwrap(), None);
+    }
+
+    #[test]
+    fn auto_bridge_cache_miss_is_transient_not_authentication() {
+        let provider = BaiProvider::new();
+        let error = browser_bridge_unavailable_error();
+
+        assert_eq!(
+            provider.error_state_kind(&error),
+            crate::core::ProviderStateKind::Unknown
+        );
+        assert_eq!(
+            provider.last_good_failure_policy_for_error(&error),
+            crate::core::LastGoodFailurePolicy::PreserveOnceThenSurface
+        );
     }
 
     #[test]
